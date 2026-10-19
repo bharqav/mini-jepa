@@ -1,0 +1,27 @@
+# Normalise line endings so the repository behaves identically on Windows,
+# macOS and Linux checkouts.
+* text=auto eol=lf
+
+# Files that must stay CRLF (Windows-only scripts)
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files that must never be line-ending converted
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.pt binary
+*.bin binary
+*.safetensors binary
+*.whl binary
+
+# Lockfiles and generated data are not diffed usefully
+uv.lock -diff
+*.lock -diff
+
+# Keep notebooks free of execution noise
+*.ipynb text eol=lf
+.ipynb_checkpoints/ export-ignore

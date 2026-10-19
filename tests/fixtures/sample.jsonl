@@ -1,0 +1,3 @@
+{"state": "A server is returning repeated HTTP 503 errors.", "type": "choice", "instructions": "What should the operator do first?", "choices": [{"id": "inspect", "text": "Inspect service health."}, {"id": "delete", "text": "Delete the database."}], "label": "inspect"}
+{"state": "The patch fixes the crash and passes tests.", "type": "score", "instructions": "How likely is the fix?", "choices": ["very unlikely", "likely", "very likely"], "label": 2}
+{"state": "The change adds logging only.", "type": "noul", "instructions": "Safe to deploy?", "choices": ["No", "Yes"], "label": 1}

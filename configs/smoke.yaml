@@ -1,0 +1,32 @@
+# Smoke: overfit 10 questions, CPU-capable. Loss -> ~0, train acc -> 1.0.
+seed: 0
+model:
+  name: Qwen/Qwen3-0.6B
+  num_layers: 4
+data:
+  max_train_questions: 10
+  max_test_questions: 0
+  max_state_tokens: 128
+  max_choice_tokens: 32
+  batch_size: 5
+  num_workers: 0
+lora:
+  last_k_layers: 0
+  r: 8
+  alpha: 16
+  dropout: 0.0
+head:
+  type: reference
+  new_dim: 128
+  num_layers: 1
+optim:
+  epochs: 10
+  lr_lora: 1.0e-4
+  lr_head: 1.0e-3
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  grad_clip: 1.0
+logging:
+  log_every: 2
+  eval_every: 1000
+  save_every: 1000

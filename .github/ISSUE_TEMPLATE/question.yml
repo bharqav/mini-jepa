@@ -1,0 +1,27 @@
+name: Configuration or question
+description: Ask about setup, configuration, or how something works
+labels: ["question"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to know?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: |
+      What are you trying to run? Include OS/GPU, Python version, and the
+      command or config you are using.
+      render: shell
+
+  - type: checkboxes
+    attributes:
+      label: Checked
+      options:
+        - label: I read the README and `docs/`
+        - label: I searched existing issues

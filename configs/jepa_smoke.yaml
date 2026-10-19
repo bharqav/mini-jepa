@@ -1,0 +1,22 @@
+# JEPA latent-prediction experiment. Tiny offline smoke defaults are in
+# scripts/jepa_smoke.py. Full Qwen3-0.6B settings (8GB VRAM budget):
+model:
+  name: Qwen/Qwen3-0.6B
+  num_layers: 8            # first-N blocks per encoder; target encoder is a copy
+jepa:
+  predictor_layers: 2
+  predictor_dim: 512
+  mask_ratio: 0.20
+  mask_span: 4
+  ema_momentum: 0.996
+  loss_mse: 1.0
+  loss_cosine: 0.0
+  var_weight: 1.0
+  cov_weight: 0.04
+  bidirectional_context: false   # true = experimental non-canonical variant
+optim:
+  steps: 2000
+  lr: 3.0e-4
+  weight_decay: 0.01
+logging:
+  log_every: 50

@@ -1,0 +1,93 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jev-qwen"
+version = "0.2.0"
+description = "Order-invariant decision models and a JEPA-style latent predictor built on a truncated Qwen3 backbone"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+keywords = [
+  "decision-models",
+  "jepa",
+  "self-supervised-learning",
+  "representation-learning",
+  "qwen3",
+  "calibration",
+  "llm",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "torch>=2.4.0",
+  "transformers>=4.44.0",
+  "peft>=0.12.0",
+  "datasets>=3.0.0",
+  "numpy>=1.26",
+  "pydantic>=2.0",
+  "pyyaml>=6.0",
+  "safetensors>=0.4",
+  "fastparquet>=0.8",
+  "pandas>=2.0",
+]
+
+[project.optional-dependencies]
+serve = ["fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27"]
+teacher = ["tqdm>=4.66"]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.6",
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "httpx>=0.27",
+  "tqdm>=4.66",
+]
+
+[project.urls]
+Homepage = "https://github.com/bharqav/jev-qwen"
+Issues = "https://github.com/bharqav/jev-qwen/issues"
+Changelog = "https://github.com/bharqav/jev-qwen/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+exclude = [".venv", "runs", "data", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+  "E501",   # line length is handled by the formatter
+  "B008",   # function calls in defaults are idiomatic for FastAPI dependencies
+  "B905",   # zip(strict=): our zips intentionally pair ragged collections
+  "E731",   # lambdas are idiomatic for tiny local callbacks (scoring kernels)
+  "E741",   # `l` is used for "loss"/"label" throughout; renaming adds noise
+  "UP031",  # %-format is clearer than f-strings for aligned numeric tables
+  "C416",   # dict comprehensions are used where explicit is clearer
+  "SIM108", # ternary is not always clearer
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]
+"scripts/*" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["jev_qwen"]

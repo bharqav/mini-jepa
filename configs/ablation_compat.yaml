@@ -1,0 +1,34 @@
+# Ablation: compat head, frozen 4-layer backbone, 300 real questions.
+# Identical to ablation_ref.yaml except head.type (+ permute augmentation on,
+# which is part of the improved recipe).
+seed: 0
+model:
+  name: Qwen/Qwen3-0.6B
+  num_layers: 4
+data:
+  max_train_questions: 300
+  max_test_questions: 100
+  max_state_tokens: 256
+  max_choice_tokens: 32
+  batch_size: 8
+  num_workers: 0
+  permute_candidates: true
+lora:
+  last_k_layers: 0
+  r: 8
+  alpha: 16
+  dropout: 0.0
+head:
+  type: compat
+  new_dim: 128
+optim:
+  epochs: 1
+  lr_lora: 1.0e-4
+  lr_head: 3.0e-3
+  weight_decay: 0.0
+  warmup_ratio: 0.05
+  grad_clip: 1.0
+logging:
+  log_every: 5
+  eval_every: 1000
+  save_every: 1000

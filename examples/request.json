@@ -1,0 +1,36 @@
+{
+  "state": "A server is returning repeated HTTP 503 errors.",
+  "questions": [
+    {
+      "id": "q0",
+      "type": "choice",
+      "question": "What should the operator do first?",
+      "candidates": [
+        {"id": "inspect", "text": "Inspect service health and dependencies."},
+        {"id": "delete", "text": "Delete the production database."},
+        {"id": "ignore", "text": "Ignore the incident."}
+      ]
+    },
+    {
+      "id": "q1",
+      "type": "noul",
+      "question": "Is it safe to ignore this incident?",
+      "candidates": [
+        {"id": "no", "text": "No"},
+        {"id": "yes", "text": "Yes"}
+      ]
+    },
+    {
+      "id": "q2",
+      "type": "score",
+      "question": "How likely is a restart to resolve the incident?",
+      "candidates": [
+        {"id": "l0", "text": "very unlikely"},
+        {"id": "l1", "text": "unlikely"},
+        {"id": "l2", "text": "likely"},
+        {"id": "l3", "text": "very likely"}
+      ]
+    }
+  ],
+  "settings": {"include_metadata": true}
+}

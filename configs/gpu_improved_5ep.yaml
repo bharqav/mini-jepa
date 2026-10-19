@@ -1,0 +1,40 @@
+# Saturation probe: improved (compat + LoRA), 5 epochs over 20k questions.
+# Identical to gpu_improved_3ep.yaml except epochs 3 -> 5, used to find where
+# additional epochs stop helping.
+seed: 0
+model:
+  name: Qwen/Qwen3-0.6B
+  num_layers: 12
+data:
+  dataset: avbiswas/bev-decision-150K
+  subset: all
+  max_train_questions: 20000
+  max_test_questions: 2000
+  max_state_tokens: 512
+  max_choice_tokens: 64
+  batch_size: 8
+  num_workers: 0
+  permute_candidates: true
+lora:
+  last_k_layers: 4
+  r: 8
+  alpha: 16
+  dropout: 0.0
+head:
+  type: compat
+  new_dim: 512
+calibration:
+  temperature_scaling: true
+optim:
+  epochs: 5
+  lr_lora: 1.0e-4
+  lr_head: 1.0e-3
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  grad_clip: 1.0
+  grad_accum_steps: 4
+  precision: bf16
+logging:
+  log_every: 20
+  eval_every: 300
+  save_every: 600

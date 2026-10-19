@@ -1,0 +1,33 @@
+# LoRA path verification: 4-layer backbone, LoRA on last 2 kept layers +
+# trainable compat head, same 300 real questions as the frozen ablations.
+seed: 0
+model:
+  name: Qwen/Qwen3-0.6B
+  num_layers: 4
+data:
+  max_train_questions: 300
+  max_test_questions: 100
+  max_state_tokens: 256
+  max_choice_tokens: 32
+  batch_size: 8
+  num_workers: 0
+  permute_candidates: false
+lora:
+  last_k_layers: 2
+  r: 8
+  alpha: 16
+  dropout: 0.0
+head:
+  type: compat
+  new_dim: 128
+optim:
+  epochs: 1
+  lr_lora: 1.0e-4
+  lr_head: 3.0e-3
+  weight_decay: 0.0
+  warmup_ratio: 0.05
+  grad_clip: 1.0
+logging:
+  log_every: 5
+  eval_every: 1000
+  save_every: 1000

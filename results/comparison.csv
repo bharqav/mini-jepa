@@ -1,0 +1,9 @@
+system,epochs,config,accuracy,nll,brier,ece,choice,noul,score,macro_f1,auc_noul,order_tv_worst,n_test,notes
+majority,-,-,,,,-,0.2930,0.5441,0.2692,,,-,-,1000,per-type majority baseline
+next-token-frozen,-,0.4007,2.9605,,,,,,,-,896,letter-scoring of truncated Qwen; poor NLL
+zero-shot-generation-28L,-,0.5200,,,,,,,-,50,greedy letter parse on <=4-choice subset
+ref-head-lora,1,configs/baseline.yaml,0.5050,0.9914,0.5653,0.0416,0.4719,0.6005,0.3227,0.4447,0.6489,4.68e-06,2280,reference ChoiceHead
+compat-head-lora,1,configs/improved.yaml,0.5585,0.9333,0.5337,0.0210,0.5037,0.6439,0.4900,0.4895,0.6811,1.03e-07,2280,IMPROVED (1 epoch)
+ref-head-lora,3,configs/gpu_ref_3ep.yaml,0.5810,0.9064,0.5138,0.0467,0.5451,0.6452,0.5100,0.5402,0.7117,3.38e-06,2280,control for improved 3ep
+compat-head-lora,3,configs/gpu_improved_3ep.yaml,0.6000,0.8736,0.4927,0.0483,0.5673,0.6650,0.5139,0.5435,0.7433,1.19e-07,2280,BEST DEFAULT: improved head 3 epochs (best raw NLL/ECE)
+compat-head-lora,5,configs/gpu_improved_5ep.yaml,0.6140,0.9283,0.5008,0.0822,0.5695,0.6998,0.5060,0.5096,0.7657,1.35e-07,2280,saturation probe: +0.014 acc but overconfident (needs T=1.95)

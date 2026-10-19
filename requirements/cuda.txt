@@ -1,0 +1,8 @@
+# Windows CUDA install (RTX 5060, CUDA 13.x driver):
+#   python -m venv .venv
+#   .venv\Scripts\activate
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+#   pip install -r requirements\base.txt
+# CPU-only fallback (functional tests, no training speed):
+#   pip install -r requirements\base.txt
+-r base.txt
