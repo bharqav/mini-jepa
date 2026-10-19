@@ -1,4 +1,4 @@
-.PHONY: help install install-cpu test test-real lint format format-check check security clean bench smoke jepa serve
+.PHONY: help install install-gpu test test-real lint format format-check check security docs clean bench smoke jepa serve
 
 PY ?= python
 VENV := .venv
@@ -38,7 +38,10 @@ format-check: ## Verify formatting without changing files
 security: ## Scan for committed secrets
 	$(BIN)/python scripts/security_scan.py
 
-check: format-check lint test security ## All offline quality gates
+docs: ## Validate markdown links and mermaid blocks
+	$(BIN)/python scripts/docs_check.py
+
+check: format-check lint test security docs ## All offline quality gates
 
 smoke: ## Tiny end-to-end training smoke (CPU, minutes)
 	$(BIN)/python scripts/train.py configs/smoke.yaml --name smoke

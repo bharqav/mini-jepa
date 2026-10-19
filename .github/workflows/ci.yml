@@ -44,6 +44,9 @@ jobs:
       - name: Secret scan
         run: python scripts/security_scan.py
 
+      - name: Documentation check (links + mermaid)
+        run: python scripts/docs_check.py
+
       - name: Import smoke (package is installable and importable)
         run: python -c "import jev_qwen, jev_qwen.jepa, jev_qwen.model, jev_qwen.schema; print('import ok')"
 
