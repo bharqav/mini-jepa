@@ -10,7 +10,7 @@ called; `DecisionNetwork` exposes no generation path (asserted in tests).
 
 ## Reference head (`reference`)
 Faithful port of `avbiswas/bev-train` `ChoiceHead`: task embedding prepended
-to `[task, choices..., answer]`, 1–2 self-attention layers over the set, then
+to `[task, choices..., answer]`, 1-2 self-attention layers over the set, then
 bilinear `answer·choice` scoring. Permutation-equivariant in exact arithmetic
 (no order terms in set attention); measured order TV ≈ 1e-6 (fp noise only).
 
@@ -19,7 +19,7 @@ bilinear `answer·choice` scoring. Permutation-equivariant in exact arithmetic
 scaled dot product + learned per-task bias, divided by learned per-task
 temperature. No inter-candidate attention, so each score depends only on
 `(answer, choice_i)` with shared parameters: **exactly** order-invariant
-(measured TV ≈ 1e-8–1e-7) and cheaper. Candidates stay comparable because all
+(measured TV ≈ 1e-8-1e-7) and cheaper. Candidates stay comparable because all
 share `Wq/Wk`.
 
 ## Why order invariance holds
@@ -55,6 +55,5 @@ order-independent) instead of attending across them.
 
 ## Question isolation
 Multi-question requests are encoded as independent rows (one backbone row per
-question). Packed multi-question execution inside one sequence is NOT used —
-isolation by construction, verified by mask tests (sibling blocks unattended)
+question). Packed multi-question execution inside one sequence is NOT used, isolation by construction, verified by mask tests (sibling blocks unattended)
 and packed-vs-independent agreement tests.

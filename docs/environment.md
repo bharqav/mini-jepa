@@ -5,7 +5,7 @@ Target: Windows 11, RTX 5060 Laptop 8.1 GB, CUDA 13.x driver.
 ## GPU execution: WSL2 is the supported path on this host
 Windows application control (WinError 4551) blocks **every CUDA PyTorch
 wheel** on this machine (`cu128` and `cu126`, verified across clean
-reinstalls — same policy also blocks scikit-learn's OpenMP `.pyd`s and
+reinstalls, same policy also blocks scikit-learn's OpenMP `.pyd`s and
 pyarrow). The GPU path therefore runs inside WSL2, which is unaffected:
 
 ```bash

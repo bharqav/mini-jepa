@@ -2,7 +2,7 @@
 
 ## Scope
 
-`jev-qwen` is a research library. It runs locally, loads a pretrained
+`mini-jepa` is a research library. It runs locally, loads a pretrained
 backbone, and exposes an optional HTTP API for inference. The security-relevant
 surface is:
 
@@ -27,29 +27,29 @@ Include, where relevant:
 - whether the issue requires a malicious checkpoint, dataset, or API client
 
 We aim to acknowledge reports within a few days. There is no guaranteed
-response SLA — this is an independently maintained research project, not a
+response SLA, this is an independently maintained research project, not a
 commercial product with a security team.
 
 ## Security posture (what is and is not implemented)
 
 ### Implemented
 
-- **Input validation** — every API request is validated by Pydantic models
+- **Input validation**, every API request is validated by Pydantic models
   (`jev_qwen.schema`). Empty questions, duplicate IDs, wrong candidate counts
   and empty texts are rejected with `422`; the service never returns a
   fabricated answer for an invalid request.
-- **Request size limits** — state length, question count and candidate count
+- **Request size limits**, state length, question count and candidate count
   are capped via `JEV_MAX_STATE_CHARS`, `JEV_MAX_QUESTIONS`,
   `JEV_MAX_CANDIDATES` (HTTP `413` when exceeded).
-- **Readiness gating** — `/ready` returns `503` until model weights are loaded,
+- **Readiness gating**, `/ready` returns `503` until model weights are loaded,
   so a reverse proxy will not route traffic to a cold instance.
-- **Resource control** — CUDA OOM triggers batch-chunk halving with retry;
+- **Resource control**, CUDA OOM triggers batch-chunk halving with retry;
   requests over `max_input_chars` are rejected rather than silently truncated.
-- **No secret logging** — structured logs include request IDs and latencies,
+- **No secret logging**, structured logs include request IDs and latencies,
   never headers or credentials. Covered by a test.
-- **Secret scanning** — `scripts/security_scan.py` runs in CI.
+- **Secret scanning**, `scripts/security_scan.py` runs in CI.
 
-### Not implemented — do not expose to untrusted networks
+### Not implemented, do not expose to untrusted networks
 
 - **No authentication or authorisation.** There is no API key, no OAuth, no
   user model. Do not put this service on a public interface as-is.

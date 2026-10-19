@@ -1,13 +1,13 @@
 <div align="center">
 
-# jev-qwen
+# mini jepa using qwen
 
 ### Order-invariant decision models and a JEPA-style latent predictor on a truncated Qwen3 backbone
 
 **Zero-token inference · Exact candidate-order invariance · Calibrated probabilities · EMA-target self-supervision**
 
-[![CI](https://github.com/bharqav/jev-qwen/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/bharqav/jev-qwen/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/bharqav/jev-qwen/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/bharqav/jev-qwen/actions/workflows/codeql.yml)
+[![CI](https://github.com/bharqav/mini-jepa/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/bharqav/mini-jepa/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/bharqav/mini-jepa/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/bharqav/mini-jepa/actions/workflows/codeql.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
@@ -16,14 +16,17 @@
 
 ---
 
-`jev-qwen` turns a pretrained causal language model into something that
+`mini-jepa` turns a pretrained causal language model into something that
 **answers questions instead of completing text**. Give it a state, a question,
 and a set of candidate answers; it returns a calibrated probability
-distribution — in a single forward pass, generating **zero tokens**.
+distribution, in a single forward pass, generating **zero tokens**.
 
 It also contains a JEPA-style latent predictor that learns representations by
 predicting masked spans in a target encoder's embedding space, rather than by
 predicting tokens.
+
+> **Naming:** the distribution is `mini-jepa`; the importable package is
+> `jev_qwen` (`from jev_qwen.infer import DecisionEngine`).
 
 > **Why build this?** Autoregressive generation is a poor fit for structured
 > decision problems: you pay for tokens you did not ask for, you get invalid
@@ -39,7 +42,7 @@ Two independent tracks share one repository.
 
 ```mermaid
 flowchart TB
-    subgraph track1 [Track 1 — Decision model]
+    subgraph track1 [Track 1, Decision model]
         direction TB
         REQ[Typed request\nstate + questions + candidates]
         TOK[tokenize.py\npack + block-causal mask\n+ shared-start positions]
@@ -53,7 +56,7 @@ flowchart TB
         HD --> REF --> OUT
     end
 
-    subgraph track2 [Track 2 — JEPA latent predictor]
+    subgraph track2 [Track 2, JEPA latent predictor]
         direction TB
         IN[Token sequence]
         MSK[Block masking\ncontiguous spans]
@@ -70,27 +73,28 @@ flowchart TB
     end
 ```
 
-### Decision Path — one forward pass, zero tokens
+### Decision Path, one forward pass, zero tokens
 
 ```mermaid
 sequenceDiagram
     participant Client
     participant Engine as DecisionEngine
     participant Tok as tokenize
-    participant Backbone as Qwen3 (N layers)
+    participant Backbone as Qwen3 prefix
     participant Head as CompatHead
 
-    Client->>Engine: DecisionRequest(state, questions[])
-    Engine->>Engine: validate schema (422 on invalid)
-    Engine->>Tok: encode_example(state, question, candidates)
-    Tok-->>Engine: input_ids, position_ids, 4-D mask, read indices
-    Note over Tok: every candidate restarts at the same position id;<br/>candidates cannot attend to siblings
-    Engine->>Backbone: forward(use_cache=False)
+    Client->>Engine: DecisionRequest with state and questions
+    Engine->>Engine: validate schema, 422 on invalid
+    Engine->>Tok: encode_example
+    Tok-->>Engine: ids, position_ids, 4D mask, read indices
+    Note over Tok: every candidate restarts at the same position id
+    Note over Tok: candidates cannot attend to siblings
+    Engine->>Backbone: forward with use_cache=False
     Backbone-->>Engine: last_hidden_state
-    Engine->>Engine: gather choice embeddings + answer embedding
-    Engine->>Head: score(answer, candidates)
-    Head-->>Engine: logits (fp32)
-    Engine->>Engine: softmax + renormalise + validate sum == 1
+    Engine->>Engine: gather choice and answer embeddings
+    Engine->>Head: score answer against candidates
+    Head-->>Engine: logits in fp32
+    Engine->>Engine: softmax, renormalise, assert sum is 1
     Engine-->>Client: DecisionResponse
 ```
 
@@ -124,14 +128,14 @@ selection. See [`results/`](results/) and [`docs/experiments.md`](docs/experimen
 
 **Backbone:** `Qwen/Qwen3-0.6B`, first 12 of 28 layers, LoRA on the last 4.
 
-### Head comparison — 3 epochs, identical data, budget and seed
+### Head comparison, 3 epochs, identical data, budget and seed
 
 | System | Accuracy | NLL | ECE | choice | noul | score | AUC | head-order TV |
 |--------|----------|-----|-----|--------|------|-------|-----|----------------|
 | reference `ChoiceHead` | 0.581 | 0.906 | 0.047 | 0.545 | 0.645 | 0.510 | 0.712 | 3.4e-6 |
 | **`CompatHead` (default)** | **0.600** | **0.874** | **0.048** | **0.567** | **0.665** | **0.514** | **0.743** | **0.0** |
 
-### Seed variance — 3 seeds per system, 1 epoch
+### Seed variance, 3 seeds per system, 1 epoch
 
 | System | mean | std | per-seed |
 |--------|------|-----|----------|
@@ -141,7 +145,7 @@ selection. See [`results/`](results/) and [`docs/experiments.md`](docs/experimen
 Δ = +0.035, t = 3.26 (**significant at 95%**). Every `CompatHead` run beats
 every `ChoiceHead` run, and the compat head is ~23× more seed-stable.
 
-### On order invariance — two different guarantees
+### On order invariance, two different guarantees
 
 These are routinely conflated, so this project measures them separately:
 
@@ -156,19 +160,19 @@ end-to-end number is larger because the *answer* token attends over all
 candidates, so permuting them changes the float32 summation order inside the
 backbone. In practice the selected candidate was identical across all three
 orderings tested, but this is not a mathematical guarantee at the pipeline
-level — only at the head level.
+level, only at the head level.
 
 If you need strict end-to-end invariance, constrain the answer read-out (e.g.
 pool candidate representations commutatively) rather than relying on the head
 alone.
 
-### Against baselines — same held-out split
+### Against baselines, same held-out split
 
 | System | Accuracy | NLL |
 |--------|----------|-----|
-| majority class (per type) | 0.293 choice / 0.544 noul / 0.269 score | — |
+| majority class (per type) | 0.293 choice / 0.544 noul / 0.269 score |, |
 | next-token letter scoring (frozen) | 0.401 | 2.960 |
-| zero-shot generation (full 28 layers) | 0.520 | — |
+| zero-shot generation (full 28 layers) | 0.520 |, |
 | **`CompatHead` + LoRA (zero tokens)** | **0.559** | **0.933** |
 
 The trained head exceeds zero-shot full-model generation on accuracy while
@@ -215,7 +219,7 @@ RTX 5060 (8.1 GB) via WSL2, CUDA 12.8 wheels:
 
 ## Project Status
 
-> **Alpha — research code.** Correct and tested, not production-hardened.
+> **Alpha, research code.** Correct and tested, not production-hardened.
 > No authentication, no rate limiting, no TLS. Intended for local use.
 > The 3-epoch headline figures are single-seed.
 > See [`docs/production.md`](docs/production.md) for an honest account of
@@ -228,8 +232,8 @@ RTX 5060 (8.1 GB) via WSL2, CUDA 12.8 wheels:
 ### Install
 
 ```bash
-git clone https://github.com/bharqav/jev-qwen.git
-cd jev-qwen
+git clone https://github.com/bharqav/mini-jepa.git
+cd mini-jepa
 make install            # CPU torch + dev extras
 # or, for CUDA:
 make install-gpu
@@ -276,18 +280,18 @@ python scripts/decide.py --checkpoint <ckpt> \
       "confidence": 0.6755
     }
   ],
-  "model_version": "jev-qwen-0.2.0@best"
+  "model_version": "mini-jepa-0.2.0@best"
 }
 ```
 
 > Captured verbatim from the shipped 3-epoch `CompatHead` checkpoint on the
-> state shown above. Note the model is **wrong** on this example — "ignore the
-> incident" is not the right first action — which is a fair illustration of the
+> state shown above. Note the model is **wrong** on this example, "ignore the
+> incident" is not the right first action, which is a fair illustration of the
 > accuracy numbers above: use the `confidence` field, do not trust the argmax
 > blindly.
 
 Reordering the candidates gives the identical `selected` id (probabilities
-drift by ~3e-3 from float summation order — see the invariance table above).
+drift by ~3e-3 from float summation order, see the invariance table above).
 
 ### Train
 
@@ -313,8 +317,8 @@ python -m uvicorn jev_qwen.api:app --host 127.0.0.1 --port 8000
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/health` | Liveness — process is up |
-| `GET` | `/ready` | Readiness — `503` until weights are loaded |
+| `GET` | `/health` | Liveness, process is up |
+| `GET` | `/ready` | Readiness, `503` until weights are loaded |
 | `GET` | `/v1/models` | Model card |
 | `POST` | `/v1/decide` | Batch decision request |
 | `POST` | `/v1/answer` | Compatibility adapter (single question) |
@@ -347,14 +351,14 @@ Interactive API docs are served at `/docs` when the app is running.
 ```
 
 Responses include per-candidate scores, a `selected` id (choice/noul),
-`confidence`, and — for `score` questions — `expected_level` and
+`confidence`, and, for `score` questions, `expected_level` and
 `normalized_score ∈ [0, 1]`.
 
 ### Error contract
 
 | Status | Meaning |
 |--------|---------|
-| `422` | Schema violation — empty questions, duplicate ids, wrong candidate counts. **Never** answered with a fabricated prediction |
+| `422` | Schema violation, empty questions, duplicate ids, wrong candidate counts. **Never** answered with a fabricated prediction |
 | `413` | Exceeds `JEV_MAX_STATE_CHARS`, `JEV_MAX_QUESTIONS`, or `JEV_MAX_CANDIDATES` |
 | `503` | Model not ready, or unrecoverable CUDA OOM |
 | `500` | Unexpected internal error (logged with a request id) |
@@ -405,7 +409,7 @@ src/jev_qwen/
 
 **Why:** Invariance becomes *exact at the head*. With shared projections,
 `score_i` depends only on `(answer, candidate_i)`, so permuting the read order
-cannot change any score — verified at **exactly 0.0** difference.
+cannot change any score, verified at **exactly 0.0** difference.
 
 **Alternatives:** the reference `ChoiceHead` uses self-attention across the
 candidate set. It is permutation-*equivariant* in exact arithmetic, but
@@ -414,14 +418,14 @@ sensitivity larger (3.4e-6). Both are implemented and ablated.
 
 **Trade-off:** no cross-candidate interaction in the head. The backbone still
 sees the full candidate set (under a block-causal mask), so candidates are not
-isolated at the representation level — only at the scoring level. Consequently
+isolated at the representation level, only at the scoring level. Consequently
 *end-to-end* invariance (re-tokenising in a different order) is only ~3e-3,
 not exact, because the answer token's attention summation order changes.
 
 ### Decision: compute deterministic things, don't learn them
 
-Any question with an exact answer — "is 58 kg under the limit?", "what does
-this estimate score?" — is computed, not inferred. Putting a network on that
+Any question with an exact answer, "is 58 kg under the limit?", "what does
+this estimate score?", is computed, not inferred. Putting a network on that
 path would add error where the rules are already exact and make results
 unauditable.
 
@@ -458,7 +462,7 @@ changes invalidate the cache automatically.
 | Dataset cache stale | Invalidated automatically via source-derived fingerprint |
 
 Determinism is verified: five identical GPU requests returned **max score
-delta 0.0**. (`inference_metadata.latency_s` naturally varies — compare
+delta 0.0**. (`inference_metadata.latency_s` naturally varies, compare
 `results`, not the whole envelope.)
 
 ---
@@ -513,7 +517,7 @@ make test-real   # full suite with real Qwen3-0.6B (~1.2 GB, cached afterwards)
 
 ## Roadmap
 
-**Implemented** — everything in the features table above.
+**Implemented**, everything in the features table above.
 
 **Planned**
 - `safetensors`-only checkpoint loading to remove the `torch.load` trust issue
@@ -533,13 +537,13 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Short version: `make install`, branch,
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
 
 ## Acknowledgements
 
-- [avbiswas/bev-train](https://github.com/avbiswas/bev-train) — the decision
+- [avbiswas/bev-train](https://github.com/avbiswas/bev-train), the decision
   architecture this project reproduces and then improves
-- [`avbiswas/bev-decision-150K`](https://huggingface.co/datasets/avbiswas/bev-decision-150K) — evaluation dataset
+- [`avbiswas/bev-decision-150K`](https://huggingface.co/datasets/avbiswas/bev-decision-150K), evaluation dataset
 - Assran et al., *Self-Supervised Learning from Images with a Joint-Embedding
-  Predictive Architecture* (CVPR 2023) — the JEPA formulation
-- Bardes et al., *VICReg* — variance/invariance/covariance regularisation
+  Predictive Architecture* (CVPR 2023), the JEPA formulation
+- Bardes et al., *VICReg*, variance/invariance/covariance regularisation

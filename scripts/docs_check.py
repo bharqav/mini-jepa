@@ -36,6 +36,21 @@ for doc in docs:
             errors.append(
                 f"{rel}: mermaid block {i} has no valid diagram type header: {first[:40]!r}"
             )
+        # Constructs that break GitHub's Mermaid renderer. Verified against
+        # mermaid v11 (the engine GitHub uses): HTML breaks inside a Note, and
+        # non-ASCII dashes anywhere in a block.
+        for j, line in enumerate(block.splitlines(), 1):
+            if re.search(r"(Note\s+(?:over|left of|right of)\s+[^:]+:.*)<br\s*/?>", line):
+                errors.append(
+                    f"{rel}: mermaid block {i} line {j} uses <br/> in a Note; "
+                    "split it into multiple Note lines instead"
+                )
+            if "—" in line or "–" in line:
+                errors.append(f"{rel}: mermaid block {i} line {j} contains a non-ASCII dash")
+            if re.match(r"\s*participant\s+\w+\s+as\s+.*[()]", line):
+                errors.append(
+                    f"{rel}: mermaid block {i} line {j} has parentheses in a participant alias"
+                )
 
     for target in LINK.findall(text):
         target = target.strip().split("#")[0]

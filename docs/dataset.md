@@ -18,7 +18,7 @@ Type semantics (verified against `bev-train/dataset.py`, not invented):
 ## Pipeline (`scripts/prepare_data.py`)
 Load → `validate_records` (malformed / impossible-label / exact-dupe /
 conflict detection) → `dedup_records` → `group_split` (grouped by state
-fingerprint BEFORE splitting — no leakage) → `{train,validation,test}.jsonl`
+fingerprint BEFORE splitting, no leakage) → `{train,validation,test}.jsonl`
 + `data_quality_report.json`.
 
 Measured slice (500 train rows / 100 test rows, `data/` subset): 600

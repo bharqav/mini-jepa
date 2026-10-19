@@ -1,14 +1,14 @@
-# Contributing to jev-qwen
+# Contributing to mini-jepa
 
 Thanks for considering a contribution. This document describes the actual
-workflow — if something here is out of date, an issue or PR fixing it is very
+workflow, if something here is out of date, an issue or PR fixing it is very
 welcome.
 
 ## Quick start
 
 ```bash
-git clone https://github.com/bharqav/jev-qwen.git
-cd jev-qwen
+git clone https://github.com/bharqav/mini-jepa.git
+cd mini-jepa
 make install            # venv + editable install with dev extras (CPU torch)
 make check              # format-check + lint + tests + secret scan
 ```
@@ -24,7 +24,7 @@ make test-real          # full suite including real Qwen3 weights (~1.2 GB downl
 
 1. **Branch** from `main` with a descriptive name (`feat/...`, `fix/...`, `docs/...`).
 2. **Make the change.** Keep it focused; unrelated refactors belong in their own PR.
-3. **Validate locally** — this is the same set CI runs:
+3. **Validate locally**, this is the same set CI runs:
 
    ```bash
    make format           # auto-format
@@ -84,7 +84,7 @@ wrong behaviour, fix the test *and* explain why in the PR description.
 - **`data.py` cache fingerprints** are derived from function source
   (`_map_fingerprint`). If you change the output schema, bump
   `SCHEMA_VERSION` or users will silently get stale cached columns.
-- **`num_workers: 0` is the default on purpose** — worker processes use
+- **`num_workers: 0` is the default on purpose**, worker processes use
   fork/forkserver, which is unreliable on WSL2 and locked-down Windows. Raise
   it only after profiling.
 

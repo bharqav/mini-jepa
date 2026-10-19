@@ -7,8 +7,7 @@ All metrics are computed from real runs by `jev_qwen/evaluate.py` and
 Accuracy (overall + per type), NLL, Brier score, macro-F1 over rows sharing
 the modal candidate count (reported with `macro_f1_n`/`macro_f1_C`, since
 F1 over mixed candidate counts is ill-defined), `auc_noul` when both classes
-present. Variable candidate counts are handled by per-row accumulation —
-distributions are never padded.
+present. Variable candidate counts are handled by per-row accumulation, distributions are never padded.
 
 ## Calibration
 ECE (10 bins) + max calibration gap. Temperature scaling is fit on a seeded
@@ -22,7 +21,7 @@ temperature instead.
 - Candidate-order sensitivity: max/mean total-variation distance over random
   permutations, mapped to candidate IDs (`order_tv_worst/mean`).
 - Input validation: invalid requests (empty, duplicate ids, wrong candidate
-  counts) are rejected with 422 — never answered with fake predictions
+  counts) are rejected with 422, never answered with fake predictions
   (tested in `tests/test_api.py`).
 - Isolation: sibling-mask tests + packed-vs-independent agreement.
 

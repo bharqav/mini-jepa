@@ -13,35 +13,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
-## [0.2.0] — 2026-10-19
+## [0.2.0], 2026-10-19
 
 ### Added
 
-- **JEPA-style latent predictor** (`jev_qwen.jepa`) — context encoder, EMA
+- **JEPA-style latent predictor** (`jev_qwen.jepa`), context encoder, EMA
   target encoder, latent predictor, block masking, VICReg variance/covariance
   terms, and collapse diagnostics (`collapse_ratio`, per-dimension std,
   covariance norm, predictor error, linear CKA). Verified non-collapsed on the
   smoke experiment; explicitly documented as *not* canonical I-JEPA.
-- **Order-invariant decision head** (`CompatHead`) — scores each candidate
+- **Order-invariant decision head** (`CompatHead`), scores each candidate
   independently against the answer vector using shared projections, making
   candidate-order invariance exact by construction rather than approximate.
-- **Calibration suite** (`jev_qwen.calibration`) — percentile bootstrap CIs,
+- **Calibration suite** (`jev_qwen.calibration`), percentile bootstrap CIs,
   temperature scaling fit/measure split, risk-coverage curves, and
   dependency-free SVG reliability diagrams.
-- **Uncertainty utilities** (`jev_qwen.stats`) — bootstrap CIs over evaluation
+- **Uncertainty utilities** (`jev_qwen.stats`), bootstrap CIs over evaluation
   rows, cross-seed aggregation, and a Welch-style seed comparison.
-- **Stratified evaluation** — accuracy with 95% CIs per domain and per
+- **Stratified evaluation**, accuracy with 95% CIs per domain and per
   candidate count.
-- **Serving hardening** — liveness (`/health`) and readiness (`/ready`) split,
+- **Serving hardening**, liveness (`/health`) and readiness (`/ready`) split,
   request-size limits, CUDA OOM chunk-halving with retry, structured JSON
   logging, deterministic inference mode.
 - **Correctness tests** for batch-vs-single forward agreement and
   packed-vs-independent question equivalence.
-- **Teacher labelling** (`jev_qwen.teacher`) — local-LM and external HTTP
+- **Teacher labelling** (`jev_qwen.teacher`), local-LM and external HTTP
   teachers with retry, cost accounting, fingerprint-keyed caching,
   disagreement flagging, and provenance. Exercised end-to-end against a real
   HTTP server in tests.
-- **Modular dataset adapters** (`jev_qwen.adapters`) — JSONL and synthetic
+- **Modular dataset adapters** (`jev_qwen.adapters`), JSONL and synthetic
   sources validated into the canonical row schema.
 
 ### Changed
@@ -57,7 +57,7 @@ Nothing yet.
 
 ### Fixed
 
-- Stale `datasets` on-disk cache silently dropping newly added columns — cache
+- Stale `datasets` on-disk cache silently dropping newly added columns, cache
   fingerprints are now derived from the mapping function's source.
 - Row metadata was aligned positionally, which was invalid once length
   bucketing reordered batches; metadata now travels inside the batch.
@@ -76,7 +76,7 @@ Nothing yet.
 - The backend is a truncated prefix of Qwen3-0.6B; full-depth training was not
   evaluated.
 
-## [0.1.0] — 2026-10-12
+## [0.1.0], 2026-10-12
 
 ### Added
 
@@ -91,6 +91,6 @@ Nothing yet.
 - Local FastAPI service, CLI, and example client.
 - Reference-faithful JEPA port, initial correctness tests.
 
-[Unreleased]: https://github.com/bharqav/jev-qwen/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/bharqav/jev-qwen/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/bharqav/jev-qwen/releases/tag/v0.1.0
+[Unreleased]: https://github.com/bharqav/mini-jepa/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/bharqav/mini-jepa/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/bharqav/mini-jepa/releases/tag/v0.1.0

@@ -1,4 +1,4 @@
-# JEPA-Style Latent Predictor on Qwen3-0.6B — Architecture Note
+# JEPA-Style Latent Predictor on Qwen3-0.6B, Architecture Note
 
 > Status: **JEPA-inspired experimental adaptation**, NOT canonical JEPA.
 > Do not describe this as "implementing JEPA for language models" without
@@ -27,7 +27,7 @@
 2. **Target encoder = first-N blocks**, not the full 28-layer model (VRAM).
    `num_layers` is recorded in checkpoint meta.
 3. **Targets = last-hidden-state vectors** at masked positions (not pooled
-   span reps or mid-layer reps — configurable later).
+   span reps or mid-layer reps, configurable later).
 4. **Masking in embedding space** with a learned mask vector (text is
    discrete; there is no pixel masking equivalent).
 
@@ -47,7 +47,7 @@
   `Qwen/Qwen3-0.6B`; original checkpoint file never modified.
 - Target encoder: deep copy at init, EMA-maintained thereafter.
 - Full-copy target encoder (all 28 layers) is possible but exceeds the 8 GB
-  budget alongside training states — N=8 default, N=12 max with LoRA/8-bit.
+  budget alongside training states, N=8 default, N=12 max with LoRA/8-bit.
 
 ## 5. Baseline comparison protocol
 

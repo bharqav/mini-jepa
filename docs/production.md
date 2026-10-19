@@ -20,7 +20,7 @@ Tunables via env: `JEV_CHECKPOINT`, `JEV_MAX_STATE_CHARS`,
 
 ## Determinism
 Five identical requests returned **max score delta 0.0** on GPU. Note that
-`inference_metadata.latency_s` naturally varies between calls — compare
+`inference_metadata.latency_s` naturally varies between calls, compare
 `results`, not the whole envelope.
 
 ## Memory behaviour
@@ -33,7 +33,7 @@ Five identical requests returned **max score delta 0.0** on GPU. Note that
 
 ## Training / evaluation
 - Gradient checkpointing: opt-in via `model.gradient_checkpointing: true`
-  (off by default — 3.3 GB already fits the target GPU).
+  (off by default, 3.3 GB already fits the target GPU).
 - Length bucketing: `LengthBucketBatchSampler` is used for eval/inference
   loaders to cut padding waste; **training deliberately keeps random
   shuffling** so batch composition stays seed-reproducible.
