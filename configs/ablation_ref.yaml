@@ -5,6 +5,7 @@ model:
   name: Qwen/Qwen3-0.6B
   num_layers: 4
 data:
+  subset: default
   max_train_questions: 300
   max_test_questions: 100
   max_state_tokens: 256

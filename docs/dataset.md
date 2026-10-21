@@ -2,7 +2,9 @@
 
 ## Reference data
 `avbiswas/bev-decision-150K` (HF, parquet per subset: `data`, `hard_50k`,
-`counterfactual_15k`, `numeric_temporal`, `skills` → train/test). Row schema:
+`counterfactual_15k`, `numeric_temporal`, `skills` → train/test). The
+`datasets` config for the on-disk `data/` folder is named `default`; `all`
+combines the subsets. Row schema:
 `state: str`, `questions_json: str` (dict `qid → {type, instructions,
 criteria, label}`), plus `domain`, `question_types`, `question_count`.
 

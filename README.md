@@ -504,7 +504,7 @@ request bodies and credentials, secret scanning, and a `pip-audit` dependency
 scan in CI.
 
 **Not implemented:** authorisation or a user model, cluster-wide rate limiting
-(buckets are per process, so N replicas enforce N budgets; behind a proxy all
+(buckets are per client within one process; N replicas enforce N budgets; behind a proxy all
 requests share the proxy address unless the edge limits per client), in-process
 TLS termination, and multi-tenancy. TLS is provided by a reverse proxy; see
 [`deploy/nginx.conf.example`](deploy/nginx.conf.example). Full threat model in

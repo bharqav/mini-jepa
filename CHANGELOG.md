@@ -65,6 +65,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tooling before installing. The certifi fix is in the environment, not a
   source pin, so CI will catch a regression.
 
+### Fixed
+
+- **Stale dataset config names in the smoke and ablation configs.** The
+  pinned dataset revision names the on-disk `data/` config `default`, and
+  `datasets` 5.x no longer accepts `data` as a config name. The smoke and
+  ablation configs relied on the old default and failed at load time. They now
+  pass `subset: default` explicitly; `docs/dataset.md` records the mapping.
+
 ### Documentation
 
 - `README.md` serving section, endpoint/auth table, error contract and
