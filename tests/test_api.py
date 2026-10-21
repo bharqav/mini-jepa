@@ -244,6 +244,27 @@ def test_rate_limit_returns_429_with_retry_after():
     assert float(r.headers["Retry-After"]) > 0
 
 
+def test_rate_limit_is_per_client_not_global():
+    api.ENGINE = StubEngine()
+    api.READY = True
+    app = api.create_app(dev_mode=True, rate_limit_rps=1, rate_limit_burst=1)
+    a = TestClient(app, client=("198.51.100.10", 1000))
+    b = TestClient(app, client=("198.51.100.11", 1000))
+    assert a.post("/v1/decide", json=GOOD).status_code == 200
+    assert a.post("/v1/decide", json=GOOD).status_code == 429
+    assert b.post("/v1/decide", json=GOOD).status_code == 200
+
+
+def test_rate_limit_bucket_registry_is_bounded():
+    from jev_qwen.api import BucketRegistry
+
+    reg = BucketRegistry(rate=1, burst=1, max_clients=2)
+    for client in ("a", "b", "c"):
+        reg.take(client)
+    assert len(reg._buckets) == 2
+    assert "a" not in reg._buckets
+
+
 def test_logs_never_contain_request_state_or_tokens(caplog):
     import logging
 

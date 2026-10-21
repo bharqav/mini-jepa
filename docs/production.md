@@ -12,7 +12,7 @@ What "production ready" means for this project, and what is verified.
 | explicit dev mode (`JEV_DEV_MODE=1` / `--dev`) disables auth and logs a warning | verified |
 | request limits: state chars, question count, candidate count → 413 | verified (25000-char state → 413, 40 questions → 413) |
 | invalid schema → 422, never a fabricated prediction | verified |
-| in-process token-bucket rate limiting → 429 + `Retry-After` | verified |
+| in-process, per-client token-bucket rate limiting → 429 + `Retry-After` | verified |
 | CUDA OOM → chunk halving + retry, 503 only if unrecoverable | implemented, CPU-tested path |
 | structured JSON logs (`event`, `request_id`, `latency_s`, `error_type`) | verified |
 | request bodies, candidate text and tokens absent from logs | tested (canary strings) |
@@ -23,9 +23,13 @@ Tunables via env: `JEV_CHECKPOINT`, `JEV_API_TOKEN`, `JEV_DEV_MODE`,
 `JEV_RATE_LIMIT_RPS`, `JEV_RATE_LIMIT_BURST`, `JEV_MAX_STATE_CHARS`,
 `JEV_MAX_QUESTIONS`, `JEV_MAX_CANDIDATES`, `JEV_LOG_LEVEL`.
 
-The rate limiter is one bucket per process. It is correct for a single
-instance; with N replicas the effective limit is N times the configured rate.
-There is no shared store.
+The rate limiter keeps one bucket per peer address, bounded to
+`JEV_RATE_LIMIT_MAX_CLIENTS` (least-recently-used evicted), so a noisy client
+cannot exhaust another client's budget on the same instance. It is still a
+single-process design: with N replicas the effective limit is N times the
+configured rate, and there is no shared store. Behind a reverse proxy all
+requests share the proxy address unless the edge performs its own per-client
+limiting; the app does not trust `X-Forwarded-For`.
 
 ## Checkpoints and hub fetches
 - `save_checkpoint` writes `head.safetensors`; `load_checkpoint` reads only

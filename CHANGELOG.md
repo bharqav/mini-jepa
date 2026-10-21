@@ -20,16 +20,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and "Roadmap" claims that checkpoints use `torch.load`. Regression tests
   monkeypatch `torch.load` to fail and assert it is never called.
 - **One-time checkpoint migration.** `scripts/convert_checkpoints.py`
-  converts legacy `head.pt` files with `torch.load(..., weights_only=True)`;
-  `--delete-old` removes the pickle after a successful conversion. No
-  in-repo checkpoints existed at the time of the change, so nothing was
-  silently rewritten.
+  converts legacy `head.pt` files with `torch.load(..., weights_only=True)`.
+  It keeps the original pickle by default; `--delete-old` is required to
+  remove it after a successful conversion, so a bad conversion cannot destroy
+  the only copy. No in-repo checkpoints existed at the time of the change, so
+  nothing was silently rewritten.
 - **Pinned Hugging Face revisions.** The backbone, tokenizer and decision
   dataset now resolve to explicit commit SHAs in `jev_qwen.hub`
-  (`Qwen/Qwen3-0.6B@c1899de`, `avbiswas/bev-decision-150K@11ed9b5`). Training,
-  inference, the teacher, baselines and the fastparquet fallback all pass the
-  revision; a custom model or dataset name without a revision fails loudly.
-  Checkpoint `meta.json` records `model_revision` so reloads stay pinned.
+  (`Qwen/Qwen3-0.6B@c1899de289a04d12100db370d81485cdf75e47ca`,
+  `avbiswas/bev-decision-150K@11ed9b5b879e7f9524e7c89c1037d498c54206f0`).
+  Training, inference, the teacher, baselines and the fastparquet fallback all
+  pass the revision; a custom model or dataset name without a revision fails
+  loudly. Checkpoint `meta.json` records `model_revision` so reloads stay
+  pinned.
 - **Bearer authentication.** `/v1/decide` and `/v1/answer` require
   `Authorization: Bearer $JEV_API_TOKEN`. The service fails closed at startup
   when the token is unset. Authentication is disabled only in explicit dev
@@ -37,10 +40,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **Breaking:** starting the app without a token and without dev mode now
   raises instead of serving unauthenticated requests, and `/demo` returns
   `404` when authentication is enabled (it does not send a token).
-- **In-process rate limiting.** A token bucket (`JEV_RATE_LIMIT_RPS`,
-  default 20; `JEV_RATE_LIMIT_BURST`, default 40) returns `429` with
-  `Retry-After`. Documented as single-process only: behind N replicas the
-  effective limit is N times the configured value, with no shared store.
+- **Per-client rate limiting.** A token bucket per peer address
+  (`JEV_RATE_LIMIT_RPS`, default 20; `JEV_RATE_LIMIT_BURST`, default 40;
+  bounded to `JEV_RATE_LIMIT_MAX_CLIENTS`, default 4096, LRU eviction) returns
+  `429` with `Retry-After`. One noisy client cannot exhaust another client's
+  budget on the same instance. Documented caveats: N replicas enforce N
+  budgets, and behind a proxy all requests share the proxy address unless the
+  edge limits per client (the app does not trust `X-Forwarded-For`).
+- **Constant-time token comparison.** Bearer tokens are compared with
+  `secrets.compare_digest`, not string equality.
 - **TLS guidance.** `SECURITY.md` now states plainly that TLS is not
   terminated in-process and that a reverse proxy is required, with a minimal
   nginx example at `deploy/nginx.conf.example`.

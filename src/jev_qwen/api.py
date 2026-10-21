@@ -16,14 +16,15 @@ Production behaviours:
 
 from __future__ import annotations
 
-import hmac
 import json
 import logging
 import os
+import secrets
 import sys
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -48,6 +49,7 @@ MAX_CANDIDATES = int(os.environ.get("JEV_MAX_CANDIDATES", "64"))
 
 DEFAULT_RATE_LIMIT_RPS = 20.0
 DEFAULT_RATE_LIMIT_BURST = 40.0
+DEFAULT_RATE_LIMIT_MAX_CLIENTS = 4096
 
 
 def _log(event: str, **fields: Any) -> None:
@@ -72,11 +74,12 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 class TokenBucket:
-    """In-process token bucket. One bucket per process, not per client.
+    """Token bucket for one client.
 
-    This is correct for a single instance. Behind multiple replicas each
-    replica enforces its own limit, so the effective rate is N times the
-    configured value; a shared store is required for a cluster-wide limit.
+    Rate limiting happens per client address so one noisy caller cannot spend
+    another caller's budget. Behind a reverse proxy every request appears to
+    come from the proxy unless the edge performs its own per-client limiting;
+    see docs/production.md.
     """
 
     def __init__(self, rate: float, burst: float):
@@ -100,6 +103,33 @@ class TokenBucket:
                 self.tokens -= 1.0
                 return True, 0.0
             return False, (1.0 - self.tokens) / self.rate
+
+
+class BucketRegistry:
+    """Bounded per-client buckets, evicting the least recently used client."""
+
+    def __init__(self, rate: float, burst: float, max_clients: int):
+        if max_clients < 1:
+            raise ValueError("max_clients must be >= 1")
+        self.rate = rate
+        self.burst = burst
+        self.max_clients = max_clients
+        self._buckets: OrderedDict[str, TokenBucket] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def take(self, client: str) -> tuple[bool, float]:
+        if self.rate <= 0:
+            return True, 0.0
+        with self._lock:
+            bucket = self._buckets.get(client)
+            if bucket is None:
+                bucket = TokenBucket(self.rate, self.burst)
+                self._buckets[client] = bucket
+                if len(self._buckets) > self.max_clients:
+                    self._buckets.popitem(last=False)
+            else:
+                self._buckets.move_to_end(client)
+            return bucket.take()
 
 
 class ModelCard(BaseModel):
@@ -127,6 +157,7 @@ def create_app(
     api_token: str | None = None,
     rate_limit_rps: float | None = None,
     rate_limit_burst: float | None = None,
+    rate_limit_max_clients: int | None = None,
 ) -> FastAPI:
     dev = _env_flag("JEV_DEV_MODE") if dev_mode is None else dev_mode
     token = (os.environ.get("JEV_API_TOKEN", "") if api_token is None else api_token).strip()
@@ -140,7 +171,12 @@ def create_app(
         if rate_limit_burst is None
         else float(rate_limit_burst)
     )
-    bucket = TokenBucket(rps, burst)
+    max_clients = (
+        int(os.environ.get("JEV_RATE_LIMIT_MAX_CLIENTS", DEFAULT_RATE_LIMIT_MAX_CLIENTS))
+        if rate_limit_max_clients is None
+        else int(rate_limit_max_clients)
+    )
+    buckets = BucketRegistry(rps, burst, max_clients)
 
     def require_token(authorization: str | None = Header(default=None)) -> None:
         if dev:
@@ -150,14 +186,15 @@ def create_app(
         if scheme.lower() != "bearer" or not supplied:
             _log("auth_failed", reason="missing_bearer")
             raise HTTPException(401, "missing bearer token", headers={"WWW-Authenticate": "Bearer"})
-        if not hmac.compare_digest(supplied, token):
+        if not secrets.compare_digest(supplied, token):
             _log("auth_failed", reason="invalid_token")
             raise HTTPException(401, "invalid bearer token", headers={"WWW-Authenticate": "Bearer"})
 
-    def rate_limit() -> None:
-        allowed, retry_after = bucket.take()
+    def rate_limit(request: Request) -> None:
+        client = request.client.host if request.client else "unknown"
+        allowed, retry_after = buckets.take(client)
         if not allowed:
-            _log("rate_limited", retry_after_s=round(retry_after, 3))
+            _log("rate_limited", client=client, retry_after_s=round(retry_after, 3))
             raise HTTPException(
                 429,
                 "rate limit exceeded",

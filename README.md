@@ -390,8 +390,9 @@ Responses include per-candidate scores, a `selected` id (choice/noul),
 | `JEV_CHECKPOINT` | *(none)* | Checkpoint directory loaded at startup |
 | `JEV_API_TOKEN` | *(none)* | Bearer token for `/v1/decide` and `/v1/answer`; required unless dev mode |
 | `JEV_DEV_MODE` | `0` | Explicitly disable authentication (loud warning; local use only) |
-| `JEV_RATE_LIMIT_RPS` | `20` | Token-bucket refill rate per second; `0` disables |
-| `JEV_RATE_LIMIT_BURST` | `40` | Token-bucket capacity |
+| `JEV_RATE_LIMIT_RPS` | `20` | Per-client token-bucket refill rate per second; `0` disables |
+| `JEV_RATE_LIMIT_BURST` | `40` | Per-client token-bucket capacity |
+| `JEV_RATE_LIMIT_MAX_CLIENTS` | `4096` | Cap on tracked client buckets; least-recently-used evicted first |
 | `JEV_MAX_STATE_CHARS` | `20000` | Reject larger states with `413` |
 | `JEV_MAX_QUESTIONS` | `32` | Reject larger question counts with `413` |
 | `JEV_MAX_CANDIDATES` | `64` | Reject larger candidate lists with `413` |
@@ -494,16 +495,18 @@ delta 0.0**. (`inference_metadata.latency_s` naturally varies, compare
 
 ## Security
 
-Implemented: bearer authentication on the inference endpoints (fail closed
-unless an explicit dev mode is enabled), in-process rate limiting, strict
-input validation, request size limits, readiness gating, OOM resource control,
-safetensors-only checkpoint loading, pinned Hugging Face revisions, structured
-logs that exclude request bodies and credentials, secret scanning, and a
-`pip-audit` dependency scan in CI.
+Implemented: bearer authentication on the inference endpoints (constant-time
+comparison via `secrets.compare_digest`, fail closed unless an explicit dev
+mode is enabled), per-client rate limiting, strict input validation, request
+size limits, readiness gating, OOM resource control, safetensors-only
+checkpoint loading, pinned Hugging Face revisions, structured logs that exclude
+request bodies and credentials, secret scanning, and a `pip-audit` dependency
+scan in CI.
 
 **Not implemented:** authorisation or a user model, cluster-wide rate limiting
-(the limiter is per process), in-process TLS termination, and multi-tenancy.
-TLS is provided by a reverse proxy; see
+(buckets are per process, so N replicas enforce N budgets; behind a proxy all
+requests share the proxy address unless the edge limits per client), in-process
+TLS termination, and multi-tenancy. TLS is provided by a reverse proxy; see
 [`deploy/nginx.conf.example`](deploy/nginx.conf.example). Full threat model in
 [`SECURITY.md`](SECURITY.md).
 

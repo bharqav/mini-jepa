@@ -41,12 +41,15 @@ commercial product with a security team.
   an explicit dev mode (`JEV_DEV_MODE=1` or `python -m jev_qwen.api --dev`),
   which logs a warning at startup. `/health`, `/ready` and `/v1/models`
   remain unauthenticated so probes and model discovery work without a secret.
-- **Rate limiting**, an in-process token bucket (`JEV_RATE_LIMIT_RPS`,
-  `JEV_RATE_LIMIT_BURST`) returns `429` with `Retry-After`. It is global to
-  the process, not per client, and **is not correct behind multiple replicas**:
-  each replica enforces its own budget, so the effective cluster rate is
-  `N x` the configured value. Use a shared store or an edge proxy if you need
-  a cluster-wide limit.
+- **Rate limiting**, a per-client token bucket (`JEV_RATE_LIMIT_RPS`,
+  `JEV_RATE_LIMIT_BURST`) returns `429` with `Retry-After`; buckets are
+  bounded (`JEV_RATE_LIMIT_MAX_CLIENTS`) and least-recently-used clients are
+  evicted. Clients are keyed by the peer address, so one caller cannot spend
+  another caller's budget. **Behind multiple replicas** each replica enforces
+  its own budget, so the effective cluster rate is `N x` the configured
+  value. **Behind a reverse proxy** every request arrives from the proxy
+  address unless the edge performs per-client limiting; the app deliberately
+  does not trust `X-Forwarded-For`.
 - **Input validation**, every API request is validated by Pydantic models
   (`jev_qwen.schema`). Empty questions, duplicate IDs, wrong candidate counts
   and empty texts are rejected with `422`; the service never returns a
