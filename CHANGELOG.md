@@ -59,7 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dependency audit.** CI runs `pip-audit --skip-editable` on every push and
   pull request; `make audit` runs it locally. The scan found `certifi
   2026.7.22` (PYSEC-2026-4320), which was upgraded to `2026.10.19`; a re-run
-  reports no known vulnerabilities. The fix is in the environment, not a
+  reports no known vulnerabilities. The first CI run also caught the runner's
+  preinstalled `setuptools 78.1.0` (PYSEC-2025-49, PYSEC-2026-3447), so the
+  build-system floor is now `setuptools>=83.0.0` and CI upgrades build
+  tooling before installing. The certifi fix is in the environment, not a
   source pin, so CI will catch a regression.
 
 ### Documentation
