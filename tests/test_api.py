@@ -14,6 +14,9 @@ class StubEngine:
     meta = {}
     device = "cpu"
 
+    def __init__(self, checkpoint=None):
+        self.checkpoint = checkpoint
+
     def decide(self, req):
         return DecisionResponse(
             results=[
@@ -35,7 +38,13 @@ class StubEngine:
 def client(ready=True):
     api.ENGINE = StubEngine()
     api.READY = ready
-    return TestClient(api.create_app())
+    return TestClient(api.create_app(dev_mode=True, rate_limit_rps=0))
+
+
+def secure_client(token="s3cret-token"):
+    api.ENGINE = StubEngine()
+    api.READY = True
+    return TestClient(api.create_app(api_token=token, rate_limit_rps=0))
 
 
 GOOD = {
@@ -160,9 +169,13 @@ def test_answer_adapter_contract():
     assert bad.status_code == 422
 
 
-def test_demo_page_served():
+def test_demo_page_served_in_dev_mode():
     r = client().get("/demo")
     assert r.status_code == 200 and "jev-qwen decision demo" in r.text
+
+
+def test_demo_is_hidden_when_authentication_is_enabled():
+    assert secure_client().get("/demo").status_code == 404
 
 
 def test_structured_logs_are_json(caplog):
@@ -178,3 +191,89 @@ def test_structured_logs_are_json(caplog):
     assert "latency_s" in payload and "questions" in payload
     # secrets must never appear in logs
     assert "Authorization" not in recs[-1].message
+
+
+def test_missing_or_wrong_bearer_token_is_401():
+    c = secure_client()
+    assert c.post("/v1/decide", json=GOOD).status_code == 401
+    assert (
+        c.post("/v1/decide", json=GOOD, headers={"Authorization": "Bearer wrong"}).status_code
+        == 401
+    )
+    assert (
+        c.post("/v1/answer", json={"state": "s", "question": {"type": "noul"}}).status_code == 401
+    )
+
+
+def test_valid_bearer_token_is_accepted():
+    c = secure_client()
+    r = c.post("/v1/decide", json=GOOD, headers={"Authorization": "Bearer s3cret-token"})
+    assert r.status_code == 200
+    # public operational endpoints stay reachable for probes and model cards
+    assert c.get("/health").status_code == 200
+    assert c.get("/ready").status_code == 200
+    assert c.get("/v1/models").status_code == 200
+
+
+def test_service_refuses_to_start_without_token_or_dev_mode(monkeypatch):
+    monkeypatch.setattr(api, "DecisionEngine", StubEngine)
+    app = api.create_app(api_token="", dev_mode=False, rate_limit_rps=0)
+    with pytest.raises(RuntimeError, match="JEV_API_TOKEN"), TestClient(app):
+        pass
+
+
+def test_dev_mode_logs_loud_warning(monkeypatch, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO)
+    monkeypatch.setattr(api, "DecisionEngine", StubEngine)
+    app = api.create_app(dev_mode=True, rate_limit_rps=0)
+    with TestClient(app) as c:
+        assert c.post("/v1/decide", json=GOOD).status_code == 200
+    messages = [r.message for r in caplog.records]
+    assert any("auth_disabled" in m and "never expose" in m for m in messages)
+
+
+def test_rate_limit_returns_429_with_retry_after():
+    api.ENGINE = StubEngine()
+    api.READY = True
+    c = TestClient(api.create_app(dev_mode=True, rate_limit_rps=1, rate_limit_burst=1))
+    assert c.post("/v1/decide", json=GOOD).status_code == 200
+    r = c.post("/v1/decide", json=GOOD)
+    assert r.status_code == 429
+    assert float(r.headers["Retry-After"]) > 0
+
+
+def test_logs_never_contain_request_state_or_tokens(caplog):
+    import logging
+
+    caplog.set_level(logging.INFO)
+    canary = "CANARY-STATE-9f3c"
+    c = secure_client()
+    c.post("/v1/decide", json={**GOOD, "state": canary}, headers={"Authorization": "Bearer wrong"})
+    c.post(
+        "/v1/decide",
+        json={**GOOD, "state": canary},
+        headers={"Authorization": "Bearer s3cret-token"},
+    )
+    for rec in caplog.records:
+        assert canary not in rec.message
+        assert "s3cret-token" not in rec.message
+
+
+def test_exception_messages_are_not_logged(caplog):
+    import logging
+
+    caplog.set_level(logging.INFO)
+
+    class LeakyEngine(StubEngine):
+        def decide(self, req):
+            raise ValueError(f"rejected state {req.state}")
+
+    api.ENGINE = LeakyEngine()
+    api.READY = True
+    canary = "CANARY-EXC-4a1b"
+    c = TestClient(api.create_app(dev_mode=True, rate_limit_rps=0))
+    assert c.post("/v1/decide", json={**GOOD, "state": canary}).status_code == 422
+    for rec in caplog.records:
+        assert canary not in rec.message
