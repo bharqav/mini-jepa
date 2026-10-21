@@ -2,9 +2,13 @@
 
 ## Reference data
 `avbiswas/bev-decision-150K` (HF, parquet per subset: `data`, `hard_50k`,
-`counterfactual_15k`, `numeric_temporal`, `skills` × train/test). Row schema:
+`counterfactual_15k`, `numeric_temporal`, `skills` → train/test). Row schema:
 `state: str`, `questions_json: str` (dict `qid → {type, instructions,
 criteria, label}`), plus `domain`, `question_types`, `question_count`.
+
+The dataset is fetched at a pinned revision
+(`11ed9b5b879e7f9524e7c89c1037d498c54206f0`, `jev_qwen.hub`), both through
+`datasets.load_dataset` and the `snapshot_download` fallback.
 
 Type semantics (verified against `bev-train/dataset.py`, not invented):
 - **choice**: candidates = `criteria` keys (with `key: description` text when

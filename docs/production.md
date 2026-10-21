@@ -8,15 +8,35 @@ What "production ready" means for this project, and what is verified.
 | model loaded once at startup, never per request | verified |
 | `/health` liveness (always 200 while process up) | verified |
 | `/ready` readiness (503 until weights resident) | verified |
+| bearer auth on `/v1/decide` and `/v1/answer`; fail closed without a token | verified |
+| explicit dev mode (`JEV_DEV_MODE=1` / `--dev`) disables auth and logs a warning | verified |
 | request limits: state chars, question count, candidate count → 413 | verified (25000-char state → 413, 40 questions → 413) |
 | invalid schema → 422, never a fabricated prediction | verified |
+| in-process token-bucket rate limiting → 429 + `Retry-After` | verified |
 | CUDA OOM → chunk halving + retry, 503 only if unrecoverable | implemented, CPU-tested path |
-| structured JSON logs (`event`, `request_id`, `latency_s`) | verified |
+| structured JSON logs (`event`, `request_id`, `latency_s`, `error_type`) | verified |
+| request bodies, candidate text and tokens absent from logs | tested (canary strings) |
 | graceful shutdown releases the model | implemented |
-| no secrets in logs | tested |
+| TLS termination | **not in-process**; reverse proxy required (`deploy/nginx.conf.example`) |
 
-Tunables via env: `JEV_CHECKPOINT`, `JEV_MAX_STATE_CHARS`,
+Tunables via env: `JEV_CHECKPOINT`, `JEV_API_TOKEN`, `JEV_DEV_MODE`,
+`JEV_RATE_LIMIT_RPS`, `JEV_RATE_LIMIT_BURST`, `JEV_MAX_STATE_CHARS`,
 `JEV_MAX_QUESTIONS`, `JEV_MAX_CANDIDATES`, `JEV_LOG_LEVEL`.
+
+The rate limiter is one bucket per process. It is correct for a single
+instance; with N replicas the effective limit is N times the configured rate.
+There is no shared store.
+
+## Checkpoints and hub fetches
+- `save_checkpoint` writes `head.safetensors`; `load_checkpoint` reads only
+  that file. A legacy `head.pt` is refused rather than loaded, because
+  `torch.load` can execute code from an untrusted pickle.
+- `scripts/convert_checkpoints.py` migrates old checkpoints once, using
+  `torch.load(..., weights_only=True)`. Pass `--delete-old` to remove the
+  pickle after conversion.
+- The backbone, tokenizer and dataset resolve to pinned commit SHAs via
+  `jev_qwen.hub`. Custom names must supply an explicit revision; no path
+  fetches an implicit `main`.
 
 ## Determinism
 Five identical requests returned **max score delta 0.0** on GPU. Note that
@@ -73,8 +93,12 @@ unbatched forwards, so a full sweep over thousands of rows is minutes of
 overhead for a metric already known to be ~1e-7.
 
 ## Known gaps (honest)
-- No auth/rate limiting/TLS: intended as a **local** service. Put it behind a
-  reverse proxy for network exposure.
+- No authorisation or user model: one bearer token grants both inference
+  endpoints. No per-tenant isolation.
+- Rate limiting is per process, not cluster-wide; a multi-replica deployment
+  needs a shared store or edge limiter.
+- TLS is not terminated in-process. A reverse proxy is required; the example
+  nginx config has not been load-tested as part of this repo.
 - Single-process; no queueing or horizontal scaling.
 - The external teacher has been tested against a local HTTP server with real
   sockets and status codes, but never against an actual paid provider.
