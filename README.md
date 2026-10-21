@@ -187,7 +187,7 @@ If you need strict end-to-end invariance, constrain the answer read-out (e.g.
 pool candidate representations commutatively) rather than relying on the head
 alone.
 
-### Against baselines, same held-out split
+### Against baselines, same held-out split (1 epoch)
 
 | System | Accuracy | NLL |
 |--------|----------|-----|
@@ -215,7 +215,7 @@ epoch choice itself has not been rerun across seeds.
 
 ### Where it fails
 
-Accuracy by candidate count:
+Accuracy by candidate count (seed-0 checkpoint, choice questions only):
 
 | C | 2 | 3 | 4 | 5 | 6 | 8 |
 |---|---|---|---|---|---|---|
