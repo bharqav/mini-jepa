@@ -31,7 +31,7 @@ cfg["data"]["batch_size"] = args.batch_size
 if not cfg["data"].get("max_test_questions"):
     print("note: config has no test split; evaluating on train split")
     args.split = "train"
-tok = get_tokenizer(meta["model_name"])
+tok = get_tokenizer(meta["model_name"], revision=meta.get("model_revision"))
 if tok.pad_token_id is None:
     tok.pad_token = tok.eos_token
 eval_questions = get_questions(args.split, cfg)

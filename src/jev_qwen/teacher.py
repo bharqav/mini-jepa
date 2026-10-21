@@ -58,22 +58,29 @@ class LocalLMTeacher:
     probability of the chosen letter (genuine, not invented)."""
 
     def __init__(
-        self, model_name: str = "Qwen/Qwen3-0.6B", num_layers: int | None = 8, device=None
+        self,
+        model_name: str = "Qwen/Qwen3-0.6B",
+        num_layers: int | None = 8,
+        device=None,
+        revision: str | None = None,
     ):
         from transformers import Qwen3ForCausalLM
 
+        from .hub import resolve_model_revision
         from .tokenize import get_tokenizer
         from .utils import get_device
 
         self.device = device or get_device()
-        self.tok = get_tokenizer(model_name)
+        rev = resolve_model_revision(model_name, revision)
+        self.tok = get_tokenizer(model_name, revision=rev)
         self.lm = Qwen3ForCausalLM.from_pretrained(
             model_name,
             dtype=torch.float32,
+            revision=rev,
             **({} if num_layers is None else {"num_hidden_layers": num_layers}),
         )
         self.lm = self.lm.to(self.device).eval()
-        self.version = f"local-lm:{model_name}:L{num_layers}"
+        self.version = f"local-lm:{model_name}@{rev[:8]}:L{num_layers}"
 
     @torch.no_grad()
     def label(self, state: str, instructions: str, choices: list[str]) -> dict[str, Any]:

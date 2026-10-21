@@ -12,6 +12,41 @@ from typing import Any
 import torch
 import yaml
 
+from .hub import resolve_model_revision
+
+HEAD_WEIGHTS = "head.safetensors"
+LEGACY_HEAD_WEIGHTS = "head.pt"
+
+
+def save_head_weights(state_dict, path) -> None:
+    """Write head weights as safetensors (no pickle, no code execution)."""
+    from safetensors.torch import save_file
+
+    tensors = {k: v.detach().cpu().contiguous() for k, v in state_dict.items()}
+    save_file(tensors, str(path))
+
+
+def load_head_weights(ckpt_dir) -> dict:
+    """Load head weights from safetensors only.
+
+    A legacy ``head.pt`` is never loaded, even as a fallback: ``torch.load``
+    can execute arbitrary code from an untrusted checkpoint. Users with old
+    checkpoints must run ``scripts/convert_checkpoints.py`` once.
+    """
+    from safetensors.torch import load_file
+
+    ckpt_dir = Path(ckpt_dir)
+    path = ckpt_dir / HEAD_WEIGHTS
+    if path.exists():
+        return load_file(str(path))
+    legacy = ckpt_dir / LEGACY_HEAD_WEIGHTS
+    if legacy.exists():
+        raise RuntimeError(
+            f"found legacy pickle checkpoint {legacy}, which is not loaded for security "
+            f"reasons; convert it once with `python scripts/convert_checkpoints.py {ckpt_dir}`"
+        )
+    raise FileNotFoundError(f"no {HEAD_WEIGHTS} in {ckpt_dir}")
+
 
 class RunLogger:
     def __init__(
@@ -67,9 +102,7 @@ class RunLogger:
             print(f"peak VRAM (allocated): {peak_vram} MB", flush=True)
         if isinstance(network.backbone, PeftModel):
             network.backbone.save_pretrained(ckpt / "lora")
-        torch.save(
-            {k: v.detach().cpu() for k, v in network.head.state_dict().items()}, ckpt / "head.pt"
-        )
+        save_head_weights(network.head.state_dict(), ckpt / HEAD_WEIGHTS)
         self.write_config(ckpt)
         head_cfg = dict(self.config.get("head", {}))
         head_cfg["num_task_types"] = (
@@ -83,6 +116,8 @@ class RunLogger:
                     "exp_id": self.exp_id,
                     "step": step,
                     "model_name": self.config["model"]["name"],
+                    "model_revision": self.config["model"].get("revision")
+                    or resolve_model_revision(self.config["model"]["name"]),
                     "num_layers": network.backbone.config.num_hidden_layers,
                     "head_config": head_cfg,
                     "max_state_tokens": self.config["data"]["max_state_tokens"],
@@ -118,6 +153,7 @@ def load_checkpoint(ckpt_dir, device):
         lora.get("last_k_layers", 0),
         meta["head_config"],
         gradient_checkpointing=cfg.get("model", {}).get("gradient_checkpointing", False),
+        revision=meta.get("model_revision") or resolve_model_revision(meta["model_name"]),
     )
     if (ckpt_dir / "lora").exists():
         from peft import set_peft_model_state_dict
@@ -125,5 +161,5 @@ def load_checkpoint(ckpt_dir, device):
 
         weights = load_file(ckpt_dir / "lora" / "adapter_model.safetensors")
         set_peft_model_state_dict(net.backbone, weights)
-    net.head.load_state_dict(torch.load(ckpt_dir / "head.pt", map_location="cpu"))
+    net.head.load_state_dict(load_head_weights(ckpt_dir))
     return net.to(device).eval(), meta

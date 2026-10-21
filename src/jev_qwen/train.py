@@ -95,6 +95,7 @@ def get_questions(split: str, config: dict[str, Any]):
         data.get(key),
         config.get("seed", 0),
         subset=data.get("subset", "data"),
+        revision=data.get("revision"),
     )
     return [
         {
@@ -129,7 +130,7 @@ def train(config: dict[str, Any], run_name: str, resume: str | None = None) -> P
         config = {**config, "resumed_from": str(rdir)}
     logger = RunLogger(config, run_name, device)
     model, lora, optim, log = config["model"], config["lora"], config["optim"], config["logging"]
-    tokenizer = get_tokenizer(model["name"])
+    tokenizer = get_tokenizer(model["name"], revision=model.get("revision"))
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -142,6 +143,7 @@ def train(config: dict[str, Any], run_name: str, resume: str | None = None) -> P
         lora["last_k_layers"],
         config["head"],
         gradient_checkpointing=model.get("gradient_checkpointing", False),
+        revision=model.get("revision"),
     )
     if resume:
         net_tmp, _ = load_checkpoint(rdir, torch.device("cpu"))

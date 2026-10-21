@@ -72,7 +72,7 @@ def test_tiny_training_run_saves_and_reloads(tmp_path):
     import jev_qwen.train as T
 
     run_dir = T.train(cfg, "ci-smoke")
-    assert (run_dir / "checkpoints" / "final" / "head.pt").exists()
+    assert (run_dir / "checkpoints" / "final" / "head.safetensors").exists()
     assert (run_dir / "checkpoints" / "final" / "meta.json").exists()
     # fresh-process reload + eval (same protocol as baseline)
     code = (

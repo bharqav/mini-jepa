@@ -41,6 +41,7 @@ class DecisionEngine:
         max_input_chars: int = 20000,
         deterministic: bool = True,
         model_version: str = "jev-qwen-0.2.0",
+        model_revision: str | None = None,
     ):
         self.device = device or get_device()
         self.precision = precision
@@ -48,9 +49,6 @@ class DecisionEngine:
             torch.use_deterministic_algorithms(False)  # custom 4D masks have no
             torch.backends.cudnn.deterministic = True  # deterministic kernel
             torch.backends.cudnn.benchmark = False
-        self.tokenizer = get_tokenizer(model_name)
-        if self.tokenizer.pad_token_id is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
         self.max_state_tokens = max_state_tokens
         self.max_choice_tokens = max_choice_tokens
         self.max_input_chars = max_input_chars
@@ -62,7 +60,14 @@ class DecisionEngine:
             self.max_state_tokens = self.meta.get("max_state_tokens", max_state_tokens)
             self.max_choice_tokens = self.meta.get("max_choice_tokens", max_choice_tokens)
             self.model_version = f"{model_version}@{Path(checkpoint).name}"
+            # Use the tokenizer from the same pinned revision as the weights,
+            # not whatever the default happens to be today.
+            self.tokenizer = get_tokenizer(
+                self.meta.get("model_name", model_name),
+                revision=self.meta.get("model_revision"),
+            )
         else:
+            self.tokenizer = get_tokenizer(model_name, revision=model_revision)
             self.network = build_network(
                 model_name,
                 num_layers,
@@ -71,9 +76,12 @@ class DecisionEngine:
                 0.0,
                 0,
                 head_config or {"type": "compat", "new_dim": 128},
+                revision=model_revision,
             )
             self.network = self.network.to(self.device).eval()
             self.meta = {}
+        if self.tokenizer.pad_token_id is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
         assert not hasattr(self.network, "generate"), (
             "decision backbone must not expose a generation path"
         )

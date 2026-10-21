@@ -151,11 +151,18 @@ class DecisionNetwork(nn.Module):
             return self.head(ce, ae, choice_mask, task_type)
 
 
-def load_backbone(model_name: str, num_layers: int | None = None):
+def load_backbone(model_name: str, num_layers: int | None = None, revision: str | None = None):
     from transformers import Qwen3Model
 
+    from .hub import resolve_model_revision
+
     ov = {} if num_layers is None else {"num_hidden_layers": num_layers}
-    return Qwen3Model.from_pretrained(model_name, dtype=torch.float32, **ov)
+    return Qwen3Model.from_pretrained(
+        model_name,
+        dtype=torch.float32,
+        revision=resolve_model_revision(model_name, revision),
+        **ov,
+    )
 
 
 def lora_target_regex(num_layers: int, last_k: int) -> str:
@@ -181,10 +188,11 @@ def build_network(
     lora_last_k_layers,
     head_config,
     gradient_checkpointing: bool = False,
+    revision: str | None = None,
 ):
     from peft import LoraConfig, get_peft_model
 
-    backbone = load_backbone(model_name, num_layers)
+    backbone = load_backbone(model_name, num_layers, revision=revision)
     if lora_last_k_layers == 0:
         backbone.requires_grad_(False)
     else:
