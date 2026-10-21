@@ -108,7 +108,9 @@ overhead for a metric already known to be ~1e-7.
 - Single-process; no queueing or horizontal scaling.
 - The external teacher has been tested against a local HTTP server with real
   sockets and status codes, but never against an actual paid provider.
-- 3-epoch headline numbers are single-seed (only the 1-epoch comparison has a
-  3-seed variance study).
+- 3-epoch headline numbers are a 3-seed mean ± std; the 5-epoch point in the
+  epoch-scaling ablation is still a single seed, so the epoch choice itself is
+  not established across seeds. The 3-epoch compat/reference gap is not
+  significant (t ≈ 1.10).
 - Accuracy degrades sharply with candidate count (0.665 at C=2 → 0.392 at
   C=8); many-way choice is the clear weak spot.

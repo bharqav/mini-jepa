@@ -65,6 +65,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tooling before installing. The certifi fix is in the environment, not a
   source pin, so CI will catch a regression.
 
+### Changed
+
+- **The 3-epoch headline is now a 3-seed mean ± std, not a single run.** The
+  compat/reference comparison was rerun with seeds 0/1/2 on the pinned
+  revisions (seed 0 re-evaluated with the current test loader). Accuracy:
+  compat 0.667 ± 0.053, reference 0.629 ± 0.031; per-seed compat 0.6065 /
+  0.6935 / 0.7015, reference 0.5950 / 0.6545 / 0.6365. The +0.0385 gap has
+  SE 0.0352 (t ≈ 1.10) and is **not significant at 95%**. The previous
+  0.600-vs-0.581 single-seed table was an unlucky seed-0 draw for both heads.
+  Compat remains higher on accuracy and NLL; the reference head calibrates
+  better at 3 epochs (ECE 0.029 vs 0.041). The 1-epoch 3-seed result
+  (+0.035, t = 3.26) still stands. Epoch scaling remains a seed-0 ablation,
+  so the 5-epoch single run is not directly comparable to the 3-seed mean.
+- **Order-invariance numbers are stated as measured.** Head-level TV is
+  ≤9e-8 for `CompatHead` and 2.4e-6 for `ChoiceHead` on the 3-epoch
+  checkpoints; "exactly 0.0" was replaced with the measured float32 residual.
+
 ### Fixed
 
 - **Stale dataset config names in the smoke and ablation configs.** The

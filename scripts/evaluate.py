@@ -47,7 +47,9 @@ except Exception as e:
 
     traceback.print_exc()
     print(f"order-sensitivity skipped: {e}")
-with open(Path(args.out_dir) / "eval_result.json", "w") as f:
+out_dir = Path(args.out_dir)
+out_dir.mkdir(parents=True, exist_ok=True)
+with open(out_dir / "eval_result.json", "w") as f:
     json.dump({"checkpoint": args.checkpoint, **metrics}, f, indent=2)
 
 # Calibration: seeded 50/50 fit/measure split; temperature fit on fit-rows,

@@ -1,21 +1,37 @@
 {
-  "best_configuration": "configs/gpu_improved_3ep.yaml — compat head (no inter-candidate attention) + LoRA(r=8) on last 4 of 12 kept Qwen3 layers + learned per-task temperature, 3 epochs",
-  "training": "20,000 real questions from avbiswas/bev-decision-150K ('all'), 3 epochs, micro-batch 8 x grad-accum 4 (32 q/step), bf16, 1,875 optimizer steps, ~55 min on RTX 5060, peak VRAM 3.3 GB",
-  "evaluation": "held-out test split of the same dataset (n=2,280 questions), never used for training or model selection",
+  "best_configuration": "configs/gpu_improved_3ep.yaml \u00e2\u20ac\u201d compat head (no inter-candidate attention) + LoRA(r=8) on last 4 of 12 kept Qwen3 layers + learned per-task temperature, 3 epochs",
+  "training": "20,000 real questions from avbiswas/bev-decision-150K ('all'), 3 epochs, micro-batch 8 x grad-accum 4 (32 q/step), bf16, 1,875 optimizer steps, ~35-55 min per run on RTX 5060, peak VRAM 3.3-3.5 GB",
+  "evaluation": "held-out test split of the same dataset (2,280 questions); the config evaluates the first 2,000 after a fixed shuffle, identical across seeds",
   "winner_metrics": {
-    "accuracy": 0.6000,
-    "nll": 0.8736,
-    "brier": 0.4927,
-    "accuracy_choice": 0.5673,
-    "accuracy_noul": 0.6650,
-    "accuracy_score": 0.5139,
-    "macro_f1": 0.5435,
-    "auc_noul": 0.7433,
-    "order_tv_worst": 1.19e-07
+    "accuracy": 0.6672,
+    "nll": 0.734,
+    "brier": 0.4221,
+    "accuracy_choice": 0.6622,
+    "accuracy_noul": 0.7185,
+    "accuracy_score": 0.51,
+    "macro_f1": 0.7303,
+    "auc_noul": 0.8078,
+    "order_tv_worst": 8.99e-08
   },
   "seed_variance_3_seeds_1_epoch": {
-    "compat": {"mean": 0.5593, "std": 0.0008, "per_seed": [0.5585, 0.5600, 0.5595]},
-    "reference": {"mean": 0.5247, "std": 0.0184, "per_seed": [0.5050, 0.5415, 0.5275]},
+    "compat": {
+      "mean": 0.5593,
+      "std": 0.0008,
+      "per_seed": [
+        0.5585,
+        0.56,
+        0.5595
+      ]
+    },
+    "reference": {
+      "mean": 0.5247,
+      "std": 0.0184,
+      "per_seed": [
+        0.505,
+        0.5415,
+        0.5275
+      ]
+    },
     "delta": 0.0347,
     "se": 0.0106,
     "t_like": 3.26,
@@ -24,23 +40,63 @@
     "note": "worst compat run beats best reference run; the compat head is ~23x more seed-stable. This supersedes the single-seed caveat about the margin shrinking with training."
   },
   "controlled_comparison_same_epochs_3": {
-    "compat_head": {"accuracy": 0.6000, "nll": 0.8736, "choice": 0.5673, "noul": 0.6650, "score": 0.5139, "auc_noul": 0.7433, "order_tv_worst": 1.19e-07},
-    "reference_head": {"accuracy": 0.5810, "nll": 0.9064, "choice": 0.5451, "noul": 0.6452, "score": 0.5100, "auc_noul": 0.7117, "order_tv_worst": 3.38e-06},
-    "delta": "+0.019 accuracy, -0.033 NLL, +0.022 choice, +0.020 noul, +0.004 score, +0.032 AUC, 28x lower order sensitivity",
-    "honest_note": "these 3-epoch runs are single-seed; the 3-seed study above (at 1 epoch) shows the reference head is ~23x noisier across seeds, so treat the 3-epoch delta as an estimate rather than a tight bound"
+    "compat_head": {
+      "accuracy": 0.6672,
+      "nll": 0.734,
+      "choice": 0.6622,
+      "noul": 0.7185,
+      "score": 0.51,
+      "auc_noul": 0.8078,
+      "order_tv_worst": 8.99e-08
+    },
+    "reference_head": {
+      "accuracy": 0.6287,
+      "nll": 0.7992,
+      "choice": 0.5946,
+      "noul": 0.7095,
+      "score": 0.4766,
+      "auc_noul": 0.7788,
+      "order_tv_worst": 2.35e-06
+    },
+    "delta": "+0.0385 accuracy (SE 0.0352, t=1.10, not significant), lower NLL, higher choice/noul/score/AUC; reference ECE 0.029 vs compat 0.041",
+    "honest_note": "3 seeds per head. The earlier single-seed +0.019 margin was an unlucky seed-0 draw for both systems. The 1-epoch 3-seed result (+0.035, t=3.26) still stands."
   },
   "epoch_scaling": {
-    "compat_1ep": {"acc": 0.5585, "nll": 0.9333, "ece": 0.0210},
-    "compat_3ep": {"acc": 0.6000, "nll": 0.8736, "ece": 0.0483},
-    "compat_5ep": {"acc": 0.6140, "nll": 0.9283, "ece": 0.0822, "temperature": 1.95},
-    "ref_1ep": {"acc": 0.5050},
-    "ref_3ep": {"acc": 0.5810},
-    "decision": "3 epochs is the default: best raw NLL (0.874) and ECE (0.048). 5 epochs buys +0.014 accuracy but needs a 1.95 temperature to be calibrated. 5-epoch checkpoint available for accuracy-first use."
+    "compat_1ep": {
+      "acc": 0.5585,
+      "nll": 0.9333,
+      "ece": 0.021
+    },
+    "compat_3ep": {
+      "acc": 0.6,
+      "nll": 0.8736,
+      "ece": 0.0483
+    },
+    "compat_5ep": {
+      "acc": 0.614,
+      "nll": 0.9283,
+      "ece": 0.0822,
+      "temperature": 1.95
+    },
+    "ref_1ep": {
+      "acc": 0.505
+    },
+    "ref_3ep": {
+      "acc": 0.581
+    },
+    "decision": "seed-0 ablation only: 3 epochs has the best raw NLL (0.874) and ECE (0.048) at seed 0; 5 epochs buys +0.014 accuracy but needs a 1.95 temperature. The 3-epoch multi-seed mean is 0.667 +/- 0.053, so do not compare the 5-epoch single run directly to it; a 5-epoch seed sweep is not yet measured."
   },
   "vs_baselines_same_test_split": {
-    "majority_choice": 0.2930, "majority_noul": 0.5441, "majority_score": 0.2692,
-    "next_token_scoring_n896": {"accuracy": 0.4007, "nll": 2.9605},
-    "zero_shot_generation_full28L_n50": {"accuracy": 0.52},
+    "majority_choice": 0.293,
+    "majority_noul": 0.5441,
+    "majority_score": 0.2692,
+    "next_token_scoring_n896": {
+      "accuracy": 0.4007,
+      "nll": 2.9605
+    },
+    "zero_shot_generation_full28L_n50": {
+      "accuracy": 0.52
+    },
     "verdict": "trained model beats every baseline on accuracy and NLL, and exceeds zero-shot full-model generation (0.52) while emitting zero tokens per decision"
   },
   "calibration": {
@@ -48,19 +104,47 @@
     "post_scaling_nll": 0.8506,
     "post_scaling_ece": 0.0317,
     "accuracy_at_50pct_coverage": 0.764,
-    "accuracy_at_100pct_coverage": 0.600
+    "accuracy_at_100pct_coverage": 0.6,
+    "note": "seed-0 3-epoch compat run"
   },
   "efficiency": {
     "train_peak_vram_mb": 3298.8,
     "infer_peak_vram_mb": 1345,
     "gpu": "RTX 5060 Laptop 8.1GB via WSL2",
-    "batch1_median_s": 0.0213, "batch16_throughput_qps": 369.1,
+    "batch1_median_s": 0.0213,
+    "batch16_throughput_qps": 369.1,
     "tokens_generated": 0
   },
   "known_limitations": [
-    "macro-F1 0.544 still trails accuracy 0.600: many-way choice remains the hard case",
-    "auc_noul 0.743 is well above chance but far from solved",
-    "3-epoch comparison is single-seed; only the 1-epoch comparison has a 3-seed variance study",
+    "accuracy 0.667 +/- 0.053 across 3 seeds; macro-F1 0.730 on the modal C=4 subset; many-way choice remains the hard case",
+    "auc_noul 0.808 is well above chance but far from solved",
+    "3-epoch compat/reference accuracy gap is not significant (t=1.10); the reference head calibrates better (ECE 0.029 vs 0.041)",
+    "epoch scaling is a seed-0 ablation; the 5-epoch point has no seed variance",
     "GPU runs require WSL2 because this host's application-control policy blocks CUDA PyTorch on Windows"
-  ]
+  ],
+  "seed_variance_3_seeds_3_epochs": {
+    "compat": {
+      "mean": 0.6672,
+      "std": 0.0527,
+      "per_seed": [
+        0.6065,
+        0.6935,
+        0.7015
+      ]
+    },
+    "reference": {
+      "mean": 0.6287,
+      "std": 0.0305,
+      "per_seed": [
+        0.595,
+        0.6545,
+        0.6365
+      ]
+    },
+    "delta": 0.0385,
+    "se": 0.0352,
+    "t_like": 1.1,
+    "significant_95": false,
+    "note": "seed 0 is the original run re-evaluated with the pinned revisions and current test loader; seeds 1/2 trained with the pinned revisions. Test questions are identical across seeds."
+  }
 }
