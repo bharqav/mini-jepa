@@ -12,6 +12,7 @@ import torch
 TASK_TYPES = {"choice": 0, "noul": 1, "score": 2}
 TASK_NAMES = {v: k for k, v in TASK_TYPES.items()}
 DATASET_NAME = "avbiswas/bev-decision-150K"
+DATASET_REVISION = "11ed9b5b879e7f9524e7c89c1037d498c54206f0"
 SCHEMA_VERSION = "v3-domain"  # bump when the output schema changes
 
 
@@ -153,15 +154,26 @@ def _map_fingerprint():
 
 
 def load_questions(
-    split: str = "train", max_questions: int | None = None, seed: int = 0, subset: str = "data"
+    split: str = "train",
+    max_questions: int | None = None,
+    seed: int = 0,
+    subset: str = "data",
+    revision: str | None = None,
 ):
     """Load reference questions. Uses HF `datasets` when available (pyarrow);
     otherwise falls back to huggingface_hub + fastparquet (pure-python-friendly
-    path for locked-down machines). Same schema either way."""
+    path for locked-down machines). Same schema either way.
+
+    The dataset revision is a pinned commit SHA; implicit ``main`` is never
+    fetched.
+    """
+    from .hub import resolve_dataset_revision
+
+    rev = resolve_dataset_revision(DATASET_NAME, revision)
     try:
         from datasets import load_dataset
 
-        ds = load_dataset(DATASET_NAME, subset, split=split).shuffle(seed=seed)
+        ds = load_dataset(DATASET_NAME, subset, split=split, revision=rev).shuffle(seed=seed)
         if max_questions is not None:
             ds = ds.select(range(min(max_questions, len(ds))))
         # num_proc=1 keeps this deterministic and avoids forkserver crashes on
@@ -178,10 +190,12 @@ def load_questions(
             ds = ds.select(range(min(max_questions, len(ds))))
         return ds
     except ImportError:
-        return _load_questions_fastparquet(split, max_questions, seed, subset)
+        return _load_questions_fastparquet(split, max_questions, seed, subset, rev)
 
 
-def _load_questions_fastparquet(split: str, max_questions: int | None, seed: int, subset: str):
+def _load_questions_fastparquet(
+    split: str, max_questions: int | None, seed: int, subset: str, revision: str
+):
     import random as _random
 
     import fastparquet
@@ -189,7 +203,10 @@ def _load_questions_fastparquet(split: str, max_questions: int | None, seed: int
 
     folder = {"default": "data"}.get(subset, subset)  # datasets-config -> parquet folder
     snap = snapshot_download(
-        DATASET_NAME, repo_type="dataset", allow_patterns=[f"{folder}/{split}.parquet"]
+        DATASET_NAME,
+        repo_type="dataset",
+        revision=revision,
+        allow_patterns=[f"{folder}/{split}.parquet"],
     )
     pf = fastparquet.ParquetFile(f"{snap}/{folder}/{split}.parquet")
     cols = ["state", "questions_json"]

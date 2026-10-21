@@ -26,14 +26,19 @@ TASK_PROMPTS = {
 }
 
 _tokenizer = None
+_tokenizer_key: tuple[str, str] | None = None
 
 
-def get_tokenizer(model_name: str = "Qwen/Qwen3-0.6B"):
-    global _tokenizer
-    if _tokenizer is None:
+def get_tokenizer(model_name: str = "Qwen/Qwen3-0.6B", revision: str | None = None):
+    global _tokenizer, _tokenizer_key
+    from .hub import resolve_model_revision
+
+    rev = resolve_model_revision(model_name, revision)
+    if _tokenizer is None or _tokenizer_key != (model_name, rev):
         from transformers import AutoTokenizer
 
-        _tokenizer = AutoTokenizer.from_pretrained(model_name)
+        _tokenizer = AutoTokenizer.from_pretrained(model_name, revision=rev)
+        _tokenizer_key = (model_name, rev)
     return _tokenizer
 
 

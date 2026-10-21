@@ -44,6 +44,11 @@ jobs:
       - name: Secret scan
         run: python scripts/security_scan.py
 
+      - name: Dependency vulnerability scan
+        run: |
+          python -m pip install pip-audit
+          pip-audit --skip-editable
+
       - name: Documentation check (links + mermaid)
         run: python scripts/docs_check.py
 

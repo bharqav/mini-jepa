@@ -219,9 +219,10 @@ RTX 5060 (8.1 GB) via WSL2, CUDA 12.8 wheels:
 
 ## Project Status
 
-> **Alpha, research code.** Correct and tested, not production-hardened.
-> No authentication, no rate limiting, no TLS. Intended for local use.
-> The 3-epoch headline figures are single-seed.
+> **Alpha, research code.** Correct and tested, not fully production-hardened.
+> Security now covers bearer authentication, rate limiting, safetensors-only
+> checkpoint loading and pinned hub revisions; TLS must be terminated by a
+> reverse proxy. The 3-epoch headline figures are single-seed.
 > See [`docs/production.md`](docs/production.md) for an honest account of
 > what is and is not implemented.
 
@@ -311,20 +312,35 @@ make jepa         # JEPA latent-prediction smoke experiment
 ### Serve
 
 ```bash
+export JEV_API_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 export JEV_CHECKPOINT=<path to checkpoint>
 python -m uvicorn jev_qwen.api:app --host 127.0.0.1 --port 8000
 ```
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Liveness, process is up |
-| `GET` | `/ready` | Readiness, `503` until weights are loaded |
-| `GET` | `/v1/models` | Model card |
-| `POST` | `/v1/decide` | Batch decision request |
-| `POST` | `/v1/answer` | Compatibility adapter (single question) |
-| `GET` | `/demo` | Minimal browser demo |
+The inference endpoints require `Authorization: Bearer <JEV_API_TOKEN>`. The
+service refuses to start if the token is unset. For local-only use you can opt
+out explicitly with `JEV_DEV_MODE=1` (or `python -m jev_qwen.api --dev`), which
+logs a loud warning because authentication is off.
 
-Interactive API docs are served at `/docs` when the app is running.
+```bash
+curl -s http://127.0.0.1:8000/v1/decide \
+  -H "Authorization: Bearer $JEV_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @examples/request.json
+```
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/health` | no | Liveness, process is up |
+| `GET` | `/ready` | no | Readiness, `503` until weights are loaded |
+| `GET` | `/v1/models` | no | Model card |
+| `POST` | `/v1/decide` | bearer | Batch decision request |
+| `POST` | `/v1/answer` | bearer | Compatibility adapter (single question) |
+| `GET` | `/demo` | dev only | Minimal browser demo (404 when auth is on) |
+
+Interactive API docs are served at `/docs` when the app is running. TLS is not
+terminated in-process; run behind a reverse proxy such as the provided
+[`deploy/nginx.conf.example`](deploy/nginx.conf.example).
 
 ---
 
@@ -358,8 +374,10 @@ Responses include per-candidate scores, a `selected` id (choice/noul),
 
 | Status | Meaning |
 |--------|---------|
+| `401` | Missing or invalid bearer token on `/v1/decide` or `/v1/answer` |
 | `422` | Schema violation, empty questions, duplicate ids, wrong candidate counts. **Never** answered with a fabricated prediction |
 | `413` | Exceeds `JEV_MAX_STATE_CHARS`, `JEV_MAX_QUESTIONS`, or `JEV_MAX_CANDIDATES` |
+| `429` | Rate limit exceeded; `Retry-After` gives the delay in seconds |
 | `503` | Model not ready, or unrecoverable CUDA OOM |
 | `500` | Unexpected internal error (logged with a request id) |
 
@@ -370,6 +388,11 @@ Responses include per-candidate scores, a `selected` id (choice/noul),
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `JEV_CHECKPOINT` | *(none)* | Checkpoint directory loaded at startup |
+| `JEV_API_TOKEN` | *(none)* | Bearer token for `/v1/decide` and `/v1/answer`; required unless dev mode |
+| `JEV_DEV_MODE` | `0` | Explicitly disable authentication (loud warning; local use only) |
+| `JEV_RATE_LIMIT_RPS` | `20` | Per-client token-bucket refill rate per second; `0` disables |
+| `JEV_RATE_LIMIT_BURST` | `40` | Per-client token-bucket capacity |
+| `JEV_RATE_LIMIT_MAX_CLIENTS` | `4096` | Cap on tracked client buckets; least-recently-used evicted first |
 | `JEV_MAX_STATE_CHARS` | `20000` | Reject larger states with `413` |
 | `JEV_MAX_QUESTIONS` | `32` | Reject larger question counts with `413` |
 | `JEV_MAX_CANDIDATES` | `64` | Reject larger candidate lists with `413` |
@@ -455,10 +478,13 @@ changes invalidate the cache automatically.
 |-----------|-----------|
 | Malformed request | `422`, never a fabricated answer |
 | Oversized request | `413` before any model work |
+| Missing or invalid token | `401` on the inference endpoints |
+| Rate limit exceeded | `429` with `Retry-After` |
 | CUDA OOM | Chunk size halves and retries down to one question; `503` only if unrecoverable |
 | Model not loaded | `/ready` returns `503`, `/v1/decide` returns `503` |
 | Invalid probability vector | `validate_response` raises rather than returning it |
 | Checkpoint/architecture mismatch | `load_checkpoint` raises; LoRA presence is cross-checked against config |
+| Legacy `head.pt` checkpoint | Refused with conversion instructions; the unsafe pickle is never loaded |
 | Dataset cache stale | Invalidated automatically via source-derived fingerprint |
 
 Determinism is verified: five identical GPU requests returned **max score
@@ -469,14 +495,20 @@ delta 0.0**. (`inference_metadata.latency_s` naturally varies, compare
 
 ## Security
 
-Implemented: strict input validation, request size limits, readiness gating,
-OOM resource control, structured logs that never include credentials, and
-secret scanning in CI.
+Implemented: bearer authentication on the inference endpoints (constant-time
+comparison via `secrets.compare_digest`, fail closed unless an explicit dev
+mode is enabled), per-client rate limiting, strict input validation, request
+size limits, readiness gating, OOM resource control, safetensors-only
+checkpoint loading, pinned Hugging Face revisions, structured logs that exclude
+request bodies and credentials, secret scanning, and a `pip-audit` dependency
+scan in CI.
 
-**Not implemented:** authentication, authorisation, rate limiting, TLS
-termination, multi-tenancy. Run behind a reverse proxy if exposing this beyond
-localhost. `load_checkpoint` uses `torch.load`, so **only load checkpoints you
-trust**. Full threat model in [`SECURITY.md`](SECURITY.md).
+**Not implemented:** authorisation or a user model, cluster-wide rate limiting
+(buckets are per process, so N replicas enforce N budgets; behind a proxy all
+requests share the proxy address unless the edge limits per client), in-process
+TLS termination, and multi-tenancy. TLS is provided by a reverse proxy; see
+[`deploy/nginx.conf.example`](deploy/nginx.conf.example). Full threat model in
+[`SECURITY.md`](SECURITY.md).
 
 ---
 
@@ -520,8 +552,6 @@ make test-real   # full suite with real Qwen3-0.6B (~1.2 GB, cached afterwards)
 **Implemented**, everything in the features table above.
 
 **Planned**
-- `safetensors`-only checkpoint loading to remove the `torch.load` trust issue
-- Model revision pinning for reproducible hub fetches
 - Downstream probe evaluation for the JEPA representations
 - Quantised CPU inference path for edge deployment
 

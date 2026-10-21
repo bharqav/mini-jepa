@@ -20,6 +20,7 @@ import torch
 sys.path.insert(0, "src")
 
 from jev_qwen.data import TASK_TYPES
+from jev_qwen.hub import DEFAULT_MODEL_NAME, resolve_model_revision
 from jev_qwen.tokenize import get_tokenizer
 from jev_qwen.train import get_questions
 from jev_qwen.utils import get_device
@@ -47,12 +48,16 @@ def main():
     ap.add_argument("--subset", default="all", help="dataset config name")
     args = ap.parse_args()
     device = get_device()
-    tok = get_tokenizer("Qwen/Qwen3-0.6B")
+    revision = resolve_model_revision(DEFAULT_MODEL_NAME)
+    tok = get_tokenizer(DEFAULT_MODEL_NAME, revision=revision)
     from transformers import Qwen3ForCausalLM
 
     lm = (
         Qwen3ForCausalLM.from_pretrained(
-            "Qwen/Qwen3-0.6B", dtype=torch.float32, num_hidden_layers=4
+            DEFAULT_MODEL_NAME,
+            dtype=torch.float32,
+            revision=revision,
+            num_hidden_layers=4,
         )
         .to(device)
         .eval()
@@ -93,7 +98,9 @@ def main():
     if args.full_model_gen:
         del lm
         glm = (
-            Qwen3ForCausalLM.from_pretrained("Qwen/Qwen3-0.6B", dtype=torch.float32)
+            Qwen3ForCausalLM.from_pretrained(
+                DEFAULT_MODEL_NAME, dtype=torch.float32, revision=revision
+            )
             .to(device)
             .eval()
         )
