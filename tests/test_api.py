@@ -5,7 +5,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-import jev_qwen.api as api
+from jev_qwen import api
 from jev_qwen.schema import CandidateScore, DecisionResponse, QuestionResponse
 
 
@@ -186,11 +186,13 @@ def test_structured_logs_are_json(caplog):
     c.post("/v1/decide", json=GOOD)
     recs = [r for r in caplog.records if r.message.startswith("{")]
     assert recs, "expected structured JSON logs"
-    payload = json.loads(recs[-1].message)
-    assert payload["event"] == "decide"
-    assert "latency_s" in payload and "questions" in payload
+    payloads = [json.loads(r.message) for r in recs]
+    decide = next(p for p in payloads if p["event"] == "decide")
+    assert "latency_s" in decide and "questions" in decide
+    access = next(p for p in payloads if p["event"] == "request")
+    assert access["status"] == 200 and access["path"] == "/v1/decide"
     # secrets must never appear in logs
-    assert "Authorization" not in recs[-1].message
+    assert all("Authorization" not in r.message for r in recs)
 
 
 def test_missing_or_wrong_bearer_token_is_401():
@@ -298,3 +300,152 @@ def test_exception_messages_are_not_logged(caplog):
     assert c.post("/v1/decide", json={**GOOD, "state": canary}).status_code == 422
     for rec in caplog.records:
         assert canary not in rec.message
+
+
+def scoped_client(keys, **kwargs):
+    api.ENGINE = StubEngine()
+    api.READY = True
+    return TestClient(api.create_app(api_keys=keys, rate_limit_rps=0, **kwargs))
+
+
+def test_scoped_keys_are_enforced_per_endpoint():
+    c = scoped_client({"decide-only": {"token": "decide-token", "scopes": ["decide"]}})
+    assert (
+        c.post(
+            "/v1/decide", json=GOOD, headers={"Authorization": "Bearer decide-token"}
+        ).status_code
+        == 200
+    )
+    r = c.post(
+        "/v1/answer",
+        json={"state": "s", "question": {"type": "noul"}},
+        headers={"Authorization": "Bearer decide-token"},
+    )
+    assert r.status_code == 403
+
+
+def test_multiple_keys_and_rotation():
+    c = scoped_client({"old": "old-token", "new": "new-token"})
+    assert (
+        c.post("/v1/decide", json=GOOD, headers={"Authorization": "Bearer old-token"}).status_code
+        == 200
+    )
+    assert (
+        c.post("/v1/decide", json=GOOD, headers={"Authorization": "Bearer new-token"}).status_code
+        == 200
+    )
+    assert (
+        c.post("/v1/decide", json=GOOD, headers={"Authorization": "Bearer gone-token"}).status_code
+        == 401
+    )
+
+
+def test_per_key_quota_is_independent_of_global_limit():
+    api.ENGINE = StubEngine()
+    api.READY = True
+    c = TestClient(
+        api.create_app(
+            api_keys={"limited": {"token": "limited-token", "rps": 1, "burst": 1}},
+            rate_limit_rps=0,
+        )
+    )
+    h = {"Authorization": "Bearer limited-token"}
+    assert c.post("/v1/decide", json=GOOD, headers=h).status_code == 200
+    assert c.post("/v1/decide", json=GOOD, headers=h).status_code == 429
+
+
+def test_forwarded_for_is_used_only_from_a_trusted_proxy():
+    api.ENGINE = StubEngine()
+    api.READY = True
+    app = api.create_app(
+        dev_mode=True,
+        rate_limit_rps=1,
+        rate_limit_burst=1,
+        trusted_proxies="10.0.0.1",
+    )
+    c = TestClient(app, client=("10.0.0.1", 1000))
+    assert (
+        c.post("/v1/decide", json=GOOD, headers={"X-Forwarded-For": "198.51.100.7"}).status_code
+        == 200
+    )
+    assert (
+        c.post("/v1/decide", json=GOOD, headers={"X-Forwarded-For": "198.51.100.7"}).status_code
+        == 429
+    )
+    assert (
+        c.post("/v1/decide", json=GOOD, headers={"X-Forwarded-For": "198.51.100.8"}).status_code
+        == 200
+    )
+
+
+def test_request_id_is_echoed_or_generated():
+    c = client()
+    r = c.get("/health", headers={"X-Request-ID": "trace-abc_123"})
+    assert r.headers["X-Request-ID"] == "trace-abc_123"
+    r2 = c.get("/health", headers={"X-Request-ID": "bad id with spaces"})
+    assert r2.headers["X-Request-ID"] != "bad id with spaces"
+    assert len(r2.headers["X-Request-ID"]) == 16
+
+
+def test_body_size_limit_is_enforced_before_parsing():
+    api.ENGINE = StubEngine()
+    api.READY = True
+    c = TestClient(api.create_app(dev_mode=True, rate_limit_rps=0, max_body_bytes=64))
+    r = c.post("/v1/decide", json=GOOD)
+    assert r.status_code == 413
+    assert "X-Request-ID" in r.headers
+
+
+def test_metrics_endpoint_reports_requests():
+    pytest.importorskip("prometheus_client")
+    c = client()
+    c.post("/v1/decide", json=GOOD)
+    r = c.get("/metrics")
+    assert r.status_code == 200
+    assert "jev_requests_total" in r.text
+    assert 'path="/v1/decide"' in r.text
+
+
+def test_metrics_can_be_disabled():
+    api.ENGINE = StubEngine()
+    api.READY = True
+    c = TestClient(api.create_app(dev_mode=True, rate_limit_rps=0, metrics_enabled=False))
+    assert c.get("/metrics").status_code == 404
+
+
+def test_concurrency_limit_rejects_excess_work():
+    import threading
+
+    class BlockingEngine(StubEngine):
+        def __init__(self):
+            super().__init__()
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def decide(self, req):
+            self.entered.set()
+            assert self.release.wait(5)
+            return super().decide(req)
+
+    engine = BlockingEngine()
+    api.ENGINE = engine
+    api.READY = True
+    app = api.create_app(dev_mode=True, rate_limit_rps=0, max_concurrency=1)
+    first = TestClient(app)
+    second = TestClient(app)
+    result = {}
+
+    def call():
+        result["response"] = first.post("/v1/decide", json=GOOD)
+
+    thread = threading.Thread(target=call)
+    thread.start()
+    try:
+        assert engine.entered.wait(5)
+        r = second.post("/v1/decide", json=GOOD)
+        assert r.status_code == 503
+        assert r.headers["Retry-After"] == "1"
+    finally:
+        engine.release.set()
+        thread.join(5)
+    assert result["response"].status_code == 200

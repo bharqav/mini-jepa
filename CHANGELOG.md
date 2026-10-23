@@ -11,6 +11,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Multi-key, scoped authentication.** `JEV_API_KEYS` or
+  `JEV_API_KEYS_FILE` accepts a JSON map of key id to token or
+  `{token, scopes, rps, burst}`. Keys can be limited to `decide` and/or
+  `answer`, carry an independent per-key quota, and multiple keys can be active
+  for rotation. Tokens are stored as PBKDF2-HMAC-SHA-256 digests and compared
+  with `hmac.compare_digest`; the legacy `JEV_API_TOKEN` path remains.
+- **Trusted-proxy client resolution.** `JEV_TRUSTED_PROXIES` lists CIDRs whose
+  `X-Forwarded-For` may be used for client attribution and per-client rate
+  limiting. The header is ignored from untrusted peers.
+- **Request IDs, audit logs and metrics.** Every response carries
+  `X-Request-ID`; access logs include method, path, status, latency, resolved
+  client and key id. `/metrics` exposes Prometheus counters/histograms for
+  requests, latency, in-flight work, rate limits, auth failures, inference
+  errors and readiness. Optional OpenTelemetry tracing is available through the
+  `otel` extra and `JEV_OTEL_ENABLED`.
+- **Bounded concurrency and body limits.** `JEV_MAX_CONCURRENCY` rejects excess
+  work with `503` and `Retry-After: 1` instead of queueing without bound;
+  `JEV_MAX_BODY_BYTES` rejects declared oversized bodies with `413` before
+  JSON parsing.
+- **Deployment artefacts.** CPU/CUDA `deploy/Dockerfile`, compose stack with
+  internal-only API and nginx TLS/rate-limit edge, hardened systemd unit, env
+  examples, and `scripts/generate_api_keys.py` for key creation/rotation.
+- **Load/soak harness.** `scripts/load_test.py` reports p50/p95/p99,
+  throughput and status counts against a staging endpoint; pure summary logic
+  is unit-tested.
+- **Model card and third-party notices.** `docs/model_card.md` records intended
+  use, metrics, limitations and the unknown dataset license;
+  `THIRD_PARTY_NOTICES.md` records backbone/dataset and runtime licenses.
+- **Reproducible installs and wider CI.** `requirements/constraints.txt` pins
+  transitive dependencies; `requirements/torch-cpu.txt` and
+  `requirements/torch-cuda.txt` pin the two torch builds. CI now runs a
+  Python 3.11/3.12/3.13 matrix, `mypy` on the production surface, a coverage
+  gate, and a container build.
+
 ### Security
 
 - **Safetensors-only checkpoint loading.** `save_checkpoint` now writes
@@ -78,6 +114,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   better at 3 epochs (ECE 0.029 vs 0.041). The 1-epoch 3-seed result
   (+0.035, t = 3.26) still stands. Epoch scaling remains a seed-0 ablation,
   so the 5-epoch single run is not directly comparable to the 3-seed mean.
+- **Python floor is now 3.11.** `requires-python`, classifiers and the
+  ruff/mypy targets moved from 3.10 to 3.11 (3.10 is end-of-life); CI exercises
+  3.11, 3.12 and 3.13.
+- **Dependency installs are pinned.** CI and the Docker image install from
+  `requirements/constraints.txt` after a pinned torch build, so a fresh runner
+  does not resolve arbitrary newer transitive versions.
 - **Order-invariance numbers are stated as measured.** Head-level TV is
   ≤9e-8 for `CompatHead` and 2.4e-6 for `ChoiceHead` on the 3-epoch
   checkpoints; "exactly 0.0" was replaced with the measured float32 residual.
@@ -100,6 +142,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   policy and the remaining honest gaps (per-process limiter, proxy TLS).
 - `SECURITY.md` threat model updated for safetensors, pinned revisions,
   authentication, rate limiting and reverse-proxy assumptions.
+- `SECURITY.md` now covers scoped keys, key rotation, trusted proxies,
+  concurrency/body limits, audit logs and metrics; `docs/production.md`
+  distinguishes verified behaviours from remaining gaps.
+- `docs/model_card.md` and `THIRD_PARTY_NOTICES.md` add model/legal context,
+  including the dataset's `unknown` license.
+- `deploy/README.md` documents compose, systemd, key rotation, metrics and the
+  load harness.
 
 
 ## [0.2.0], 2026-10-19

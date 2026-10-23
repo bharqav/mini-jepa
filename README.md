@@ -342,10 +342,18 @@ export JEV_CHECKPOINT=<path to checkpoint>
 python -m uvicorn jev_qwen.api:app --host 127.0.0.1 --port 8000
 ```
 
-The inference endpoints require `Authorization: Bearer <JEV_API_TOKEN>`. The
-service refuses to start if the token is unset. For local-only use you can opt
-out explicitly with `JEV_DEV_MODE=1` (or `python -m jev_qwen.api --dev`), which
-logs a loud warning because authentication is off.
+For multiple scoped keys, set `JEV_API_KEYS` (JSON) or
+`JEV_API_KEYS_FILE` instead of `JEV_API_TOKEN`; see
+[`scripts/generate_api_keys.py`](scripts/generate_api_keys.py). A key may have
+only the `decide` or `answer` scope and an optional per-key `rps`/`burst`
+quota. The service refuses to start if no key is configured. For local-only use
+you can opt out explicitly with `JEV_DEV_MODE=1` (or
+`python -m jev_qwen.api --dev`), which logs a loud warning because
+authentication is off.
+
+Requests carry an `X-Request-ID` (supplied or generated) in the response and
+structured access logs. Prometheus metrics are at `/metrics`; keep that
+endpoint on a private network.
 
 ```bash
 curl -s http://127.0.0.1:8000/v1/decide \
@@ -361,11 +369,13 @@ curl -s http://127.0.0.1:8000/v1/decide \
 | `GET` | `/v1/models` | no | Model card |
 | `POST` | `/v1/decide` | bearer | Batch decision request |
 | `POST` | `/v1/answer` | bearer | Compatibility adapter (single question) |
+| `GET` | `/metrics` | no | Prometheus metrics (restrict at the edge) |
 | `GET` | `/demo` | dev only | Minimal browser demo (404 when auth is on) |
 
 Interactive API docs are served at `/docs` when the app is running. TLS is not
 terminated in-process; run behind a reverse proxy such as the provided
-[`deploy/nginx.conf.example`](deploy/nginx.conf.example).
+[`deploy/nginx.conf.example`](deploy/nginx.conf.example). Container and systemd
+templates live in [`deploy/`](deploy/README.md).
 
 ---
 
@@ -400,10 +410,11 @@ Responses include per-candidate scores, a `selected` id (choice/noul),
 | Status | Meaning |
 |--------|---------|
 | `401` | Missing or invalid bearer token on `/v1/decide` or `/v1/answer` |
+| `403` | The key is valid but lacks the endpoint's scope |
 | `422` | Schema violation, empty questions, duplicate ids, wrong candidate counts. **Never** answered with a fabricated prediction |
-| `413` | Exceeds `JEV_MAX_STATE_CHARS`, `JEV_MAX_QUESTIONS`, or `JEV_MAX_CANDIDATES` |
+| `413` | Exceeds `JEV_MAX_BODY_BYTES`, `JEV_MAX_STATE_CHARS`, `JEV_MAX_QUESTIONS`, or `JEV_MAX_CANDIDATES` |
 | `429` | Rate limit exceeded; `Retry-After` gives the delay in seconds |
-| `503` | Model not ready, or unrecoverable CUDA OOM |
+| `503` | Model not ready, unrecoverable CUDA OOM, or the concurrency limit is full (`Retry-After: 1`) |
 | `500` | Unexpected internal error (logged with a request id) |
 
 ---
@@ -413,15 +424,24 @@ Responses include per-candidate scores, a `selected` id (choice/noul),
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `JEV_CHECKPOINT` | *(none)* | Checkpoint directory loaded at startup |
-| `JEV_API_TOKEN` | *(none)* | Bearer token for `/v1/decide` and `/v1/answer`; required unless dev mode |
+| `JEV_API_TOKEN` | *(none)* | Legacy single bearer token; use one of the key variables below for scopes/rotation |
+| `JEV_API_KEYS` | *(none)* | JSON map of key id to token or `{token, scopes, rps, burst}` |
+| `JEV_API_KEYS_FILE` | *(none)* | Path to the same JSON document (mutually exclusive with `JEV_API_KEYS`) |
+| `JEV_TRUSTED_PROXIES` | *(none)* | Comma-separated CIDRs allowed to supply `X-Forwarded-For` |
 | `JEV_DEV_MODE` | `0` | Explicitly disable authentication (loud warning; local use only) |
 | `JEV_RATE_LIMIT_RPS` | `20` | Per-client token-bucket refill rate per second; `0` disables |
 | `JEV_RATE_LIMIT_BURST` | `40` | Per-client token-bucket capacity |
 | `JEV_RATE_LIMIT_MAX_CLIENTS` | `4096` | Cap on tracked client buckets; least-recently-used evicted first |
+| `JEV_MAX_CONCURRENCY` | `0` | Max simultaneous inference requests; `0` = unbounded. Set `1` per GPU |
+| `JEV_MAX_BODY_BYTES` | `1000000` | Reject declared bodies larger than this with `413` |
 | `JEV_MAX_STATE_CHARS` | `20000` | Reject larger states with `413` |
 | `JEV_MAX_QUESTIONS` | `32` | Reject larger question counts with `413` |
 | `JEV_MAX_CANDIDATES` | `64` | Reject larger candidate lists with `413` |
+| `JEV_METRICS_ENABLED` | `1` | Serve Prometheus metrics at `/metrics` |
 | `JEV_LOG_LEVEL` | `INFO` | Standard logging level |
+| `JEV_OTEL_ENABLED` | `0` | Enable OpenTelemetry tracing (requires the `otel` extra) |
+| `JEV_OTEL_ENDPOINT` | *(none)* | OTLP/HTTP trace endpoint |
+| `JEV_OTEL_SERVICE_NAME` | `jev-qwen` | Service name reported to the trace backend |
 | `JEV_REAL_WEIGHTS` | *(unset)* | Set to `1` to run the real-weights test suite |
 | `JEV_TEACHER_URL` | *(none)* | External teacher endpoint (optional) |
 | `JEV_TEACHER_KEY` | *(none)* | Bearer token for the teacher endpoint |
@@ -521,18 +541,20 @@ delta 0.0**. (`inference_metadata.latency_s` naturally varies, compare
 
 ## Security
 
-Implemented: bearer authentication on the inference endpoints (constant-time
-comparison via `secrets.compare_digest`, fail closed unless an explicit dev
-mode is enabled), per-client rate limiting, strict input validation, request
-size limits, readiness gating, OOM resource control, safetensors-only
-checkpoint loading, pinned Hugging Face revisions, structured logs that exclude
-request bodies and credentials, secret scanning, and a `pip-audit` dependency
-scan in CI.
+Implemented: scoped bearer authentication on the inference endpoints
+(constant-time comparison via `hmac.compare_digest`, fail closed unless an
+explicit dev mode is enabled), key rotation by running multiple keys, per-client
+and per-key rate limiting, trusted-proxy client resolution, a bounded
+concurrency cap, strict input validation, body/state/field size limits,
+readiness gating, OOM resource control, safetensors-only checkpoint loading,
+pinned Hugging Face revisions, request IDs, structured audit/access logs that
+exclude request bodies and credentials, Prometheus metrics, optional
+OpenTelemetry tracing, secret scanning, and a `pip-audit` dependency scan in CI.
 
-**Not implemented:** authorisation or a user model, cluster-wide rate limiting
-(buckets are per client within one process; N replicas enforce N budgets; behind a proxy all
-requests share the proxy address unless the edge limits per client), in-process
-TLS termination, and multi-tenancy. TLS is provided by a reverse proxy; see
+**Not implemented:** a user database or per-tenant isolation (one key grants
+inference), cluster-wide rate limiting (buckets are per instance; N replicas
+enforce N budgets), in-process TLS termination, and a WAF/connection cap beyond
+the edge examples. TLS is provided by a reverse proxy; see
 [`deploy/nginx.conf.example`](deploy/nginx.conf.example). Full threat model in
 [`SECURITY.md`](SECURITY.md).
 
@@ -552,7 +574,7 @@ make test-real   # full suite with real Qwen3-0.6B (~1.2 GB, cached afterwards)
 | Calibration | Temperature recovery for over/under-confidence, ECE, risk-coverage thresholds, SVG validity |
 | JEPA | Target-encoder isolation (no gradients), EMA exactness, no trivial copy, collapse detection |
 | Data | Schema validation, grouped splits with no leakage, adapters, duplicate rejection |
-| API | Health/readiness gating, limits, error contract, structured logging, demo page |
+| API | Health/readiness gating, limits, error contract, structured logging, scoped auth, rate limits, metrics, concurrency, demo page |
 | Teacher | Cache reuse, validation rejection, real-HTTP retry/backoff/accounting |
 | Integration | Tiny train → save → **fresh-process** reload → evaluate |
 
@@ -567,7 +589,10 @@ make test-real   # full suite with real Qwen3-0.6B (~1.2 GB, cached afterwards)
 | [docs/experiments.md](docs/experiments.md) | Every experiment, including negative results |
 | [docs/evaluation.md](docs/evaluation.md) | Metrics definitions and methodology |
 | [docs/dataset.md](docs/dataset.md) | Dataset schema and split hygiene |
+| [docs/model_card.md](docs/model_card.md) | Intended use, metrics, limitations, dataset-license caveat |
 | [docs/production.md](docs/production.md) | Serving behaviour, limits, and known gaps |
+| [deploy/README.md](deploy/README.md) | Compose/systemd deployment, key rotation, metrics, load test |
+| [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) | Backbone/dataset and runtime licenses |
 | [docs/environment.md](docs/environment.md) | Platform notes and fallbacks |
 | [results/notes.md](results/notes.md) | Full experiment log with measured numbers |
 

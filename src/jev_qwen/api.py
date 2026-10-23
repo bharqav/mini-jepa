@@ -4,13 +4,12 @@ Production behaviours:
 - readiness/liveness split (/health vs /ready) so a load balancer does not
   send traffic before weights are resident
 - hard request-size limits enforced before any model work
-- bearer-token authentication on /v1/decide and /v1/answer (fail closed unless
-  an explicit dev mode is enabled)
-- in-process token-bucket rate limiting (single instance only; see docs)
+- multiple scoped bearer tokens (fail closed unless explicit dev mode)
+- per-client and per-key token-bucket rate limiting
+- bounded concurrency so one burst cannot queue unbounded work
+- request IDs on every response, structured access logs and Prometheus metrics
 - typed errors (422 validation, 413 too large, 429 rate limited, 503 not
   ready, 500 unexpected)
-- structured JSON logs with latency; request bodies and credentials are never
-  logged
 - graceful shutdown releases the model
 """
 
@@ -19,22 +18,36 @@ from __future__ import annotations
 import json
 import logging
 import os
-import secrets
+import re
 import sys
 import threading
 import time
 import uuid
 from collections import OrderedDict
+from collections.abc import Iterable, Mapping
 from contextlib import asynccontextmanager
 from typing import Any
 
 import torch
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
+from .auth import (
+    SCOPES,
+    ApiKey,
+    ApiKeyRegistry,
+    AuthContext,
+    TrustedProxies,
+    extract_bearer,
+    load_keys_from_env,
+    parse_api_keys,
+    single_key,
+)
 from .infer import DecisionEngine
+from .metrics import PROMETHEUS_AVAILABLE, Metrics
 from .schema import DecisionRequest
+from .tracing import configure_tracing
 
 logging.basicConfig(
     stream=sys.stdout, level=os.environ.get("JEV_LOG_LEVEL", "INFO"), format="%(message)s"
@@ -46,10 +59,15 @@ READY = False
 MAX_STATE_CHARS = int(os.environ.get("JEV_MAX_STATE_CHARS", "20000"))
 MAX_QUESTIONS = int(os.environ.get("JEV_MAX_QUESTIONS", "32"))
 MAX_CANDIDATES = int(os.environ.get("JEV_MAX_CANDIDATES", "64"))
+MAX_BODY_BYTES = int(os.environ.get("JEV_MAX_BODY_BYTES", "1000000"))
 
 DEFAULT_RATE_LIMIT_RPS = 20.0
 DEFAULT_RATE_LIMIT_BURST = 40.0
 DEFAULT_RATE_LIMIT_MAX_CLIENTS = 4096
+DEFAULT_MAX_CONCURRENCY = 0
+DEFAULT_METRICS_ENABLED = True
+
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 
 
 def _log(event: str, **fields: Any) -> None:
@@ -73,13 +91,21 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _request_id(request: Request) -> str:
+    supplied = request.headers.get("x-request-id", "").strip()
+    if _REQUEST_ID_RE.match(supplied):
+        return supplied
+    return uuid.uuid4().hex[:16]
+
+
 class TokenBucket:
-    """Token bucket for one client.
+    """Token bucket for one client or key.
 
     Rate limiting happens per client address so one noisy caller cannot spend
-    another caller's budget. Behind a reverse proxy every request appears to
-    come from the proxy unless the edge performs its own per-client limiting;
-    see docs/production.md.
+    another caller's budget. Per-key quotas add a second, independent budget
+    for a scoped credential. Behind a reverse proxy the client address is only
+    taken from ``X-Forwarded-For`` when the peer is a configured trusted
+    proxy; see docs/production.md.
     """
 
     def __init__(self, rate: float, burst: float):
@@ -106,7 +132,7 @@ class TokenBucket:
 
 
 class BucketRegistry:
-    """Bounded per-client buckets, evicting the least recently used client."""
+    """Bounded buckets, evicting the least recently used client."""
 
     def __init__(self, rate: float, burst: float, max_clients: int):
         if max_clients < 1:
@@ -117,13 +143,17 @@ class BucketRegistry:
         self._buckets: OrderedDict[str, TokenBucket] = OrderedDict()
         self._lock = threading.Lock()
 
-    def take(self, client: str) -> tuple[bool, float]:
-        if self.rate <= 0:
+    def take(
+        self, client: str, rate: float | None = None, burst: float | None = None
+    ) -> tuple[bool, float]:
+        effective_rate = self.rate if rate is None else rate
+        effective_burst = self.burst if burst is None else burst
+        if effective_rate <= 0:
             return True, 0.0
         with self._lock:
             bucket = self._buckets.get(client)
             if bucket is None:
-                bucket = TokenBucket(self.rate, self.burst)
+                bucket = TokenBucket(effective_rate, effective_burst)
                 self._buckets[client] = bucket
                 if len(self._buckets) > self.max_clients:
                     self._buckets.popitem(last=False)
@@ -150,17 +180,43 @@ def _check_size(req: DecisionRequest) -> None:
             )
 
 
+def _require_scope(auth: AuthContext, scope: str) -> None:
+    if auth.dev:
+        return
+    if scope not in auth.scopes:
+        raise HTTPException(403, f"key {auth.key_id!r} lacks the {scope!r} scope")
+
+
+def _build_registry(
+    api_token: str | None,
+    api_keys: Mapping[str, Any] | Iterable[ApiKey] | None,
+) -> ApiKeyRegistry:
+    if api_keys is not None:
+        if isinstance(api_keys, Mapping):
+            return ApiKeyRegistry(parse_api_keys(json.dumps(api_keys), "api_keys"))
+        return ApiKeyRegistry(api_keys)
+    if api_token is not None:
+        token = api_token.strip()
+        return ApiKeyRegistry([single_key(token)] if token else [])
+    return ApiKeyRegistry(load_keys_from_env())
+
+
 def create_app(
     checkpoint: str | None = None,
     *,
     dev_mode: bool | None = None,
     api_token: str | None = None,
+    api_keys: Mapping[str, Any] | Iterable[ApiKey] | None = None,
+    trusted_proxies: str | None = None,
     rate_limit_rps: float | None = None,
     rate_limit_burst: float | None = None,
     rate_limit_max_clients: int | None = None,
+    max_concurrency: int | None = None,
+    max_body_bytes: int | None = None,
+    metrics_enabled: bool | None = None,
 ) -> FastAPI:
     dev = _env_flag("JEV_DEV_MODE") if dev_mode is None else dev_mode
-    token = (os.environ.get("JEV_API_TOKEN", "") if api_token is None else api_token).strip()
+    registry = _build_registry(api_token, api_keys)
     rps = (
         float(os.environ.get("JEV_RATE_LIMIT_RPS", DEFAULT_RATE_LIMIT_RPS))
         if rate_limit_rps is None
@@ -176,30 +232,86 @@ def create_app(
         if rate_limit_max_clients is None
         else int(rate_limit_max_clients)
     )
-    buckets = BucketRegistry(rps, burst, max_clients)
+    concurrency = (
+        int(os.environ.get("JEV_MAX_CONCURRENCY", DEFAULT_MAX_CONCURRENCY))
+        if max_concurrency is None
+        else int(max_concurrency)
+    )
+    body_limit = (
+        int(os.environ.get("JEV_MAX_BODY_BYTES", MAX_BODY_BYTES))
+        if max_body_bytes is None
+        else int(max_body_bytes)
+    )
+    metrics_on = (
+        _env_flag("JEV_METRICS_ENABLED", DEFAULT_METRICS_ENABLED)
+        if metrics_enabled is None
+        else metrics_enabled
+    )
+    proxies = (
+        TrustedProxies.from_env()
+        if trusted_proxies is None
+        else TrustedProxies(trusted_proxies.split(","))
+    )
+    client_buckets = BucketRegistry(rps, burst, max_clients)
+    key_buckets = BucketRegistry(rps, burst, max(1, len(registry)))
+    semaphore = threading.BoundedSemaphore(concurrency) if concurrency > 0 else None
+    metrics = Metrics(metrics_on)
 
-    def require_token(authorization: str | None = Header(default=None)) -> None:
+    def require_token(
+        request: Request, authorization: str | None = Header(default=None)
+    ) -> AuthContext:
         if dev:
-            return
-        scheme, _, supplied = (authorization or "").partition(" ")
-        supplied = supplied.strip()
-        if scheme.lower() != "bearer" or not supplied:
-            _log("auth_failed", reason="missing_bearer")
+            return AuthContext("dev", SCOPES, dev=True)
+        rid = getattr(request.state, "request_id", None)
+        supplied = extract_bearer(authorization)
+        if supplied is None:
+            _log("auth_failed", request_id=rid, reason="missing_bearer")
+            metrics.auth_failed("missing_bearer")
             raise HTTPException(401, "missing bearer token", headers={"WWW-Authenticate": "Bearer"})
-        if not secrets.compare_digest(supplied, token):
-            _log("auth_failed", reason="invalid_token")
+        key = registry.authenticate(supplied)
+        if key is None:
+            _log("auth_failed", request_id=rid, reason="invalid_token")
+            metrics.auth_failed("invalid_token")
             raise HTTPException(401, "invalid bearer token", headers={"WWW-Authenticate": "Bearer"})
+        request.scope["key_id"] = key.key_id
+        return AuthContext(key.key_id, key.scopes, key.rps, key.burst)
 
-    def rate_limit(request: Request) -> None:
-        client = request.client.host if request.client else "unknown"
-        allowed, retry_after = buckets.take(client)
+    def rate_limit(request: Request, auth: AuthContext = Depends(require_token)) -> None:
+        client = proxies.client_ip(
+            request.client.host if request.client else None,
+            request.headers.get("x-forwarded-for"),
+        )
+        allowed, retry_after = client_buckets.take(client)
+        if auth.rps is not None or auth.burst is not None:
+            key_allowed, key_retry = key_buckets.take(auth.key_id, auth.rps, auth.burst)
+            allowed = allowed and key_allowed
+            retry_after = max(retry_after, key_retry)
         if not allowed:
-            _log("rate_limited", client=client, retry_after_s=round(retry_after, 3))
+            rid = getattr(request.state, "request_id", None)
+            _log(
+                "rate_limited",
+                request_id=rid,
+                client=client,
+                key_id=auth.key_id,
+                retry_after_s=round(retry_after, 3),
+            )
+            metrics.limited()
             raise HTTPException(
                 429,
                 "rate limit exceeded",
                 headers={"Retry-After": f"{max(retry_after, 0.001):.3f}"},
             )
+
+    def limit_concurrency():
+        if semaphore is None:
+            yield
+            return
+        if not semaphore.acquire(blocking=False):
+            raise HTTPException(503, "server busy", headers={"Retry-After": "1"})
+        try:
+            yield
+        finally:
+            semaphore.release()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -215,15 +327,16 @@ def create_app(
                     }
                 )
             )
-        elif not token:
+        elif len(registry) == 0:
             raise RuntimeError(
-                "JEV_API_TOKEN is not set; refusing to start with authentication disabled. "
-                "Set JEV_API_TOKEN to a secret, or opt into local-only dev mode with "
+                "no API keys configured; refusing to start with authentication disabled. "
+                "Set JEV_API_KEYS or JEV_API_TOKEN, or opt into local-only dev mode with "
                 "JEV_DEV_MODE=1 (or `python -m jev_qwen.api --dev`)."
             )
         t0 = time.perf_counter()
         ENGINE = DecisionEngine(checkpoint=checkpoint or os.environ.get("JEV_CHECKPOINT"))
         READY = True
+        metrics.set_ready(True)
         _log(
             "engine_ready",
             model=ENGINE.model_version,
@@ -234,10 +347,74 @@ def create_app(
             yield
         finally:
             READY = False
+            metrics.set_ready(False)
             _log("engine_shutdown")
             ENGINE = None
 
     app = FastAPI(title="jev-qwen decision API", version="0.2.0", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def observe(request: Request, call_next):
+        rid = _request_id(request)
+        request.state.request_id = rid
+        method = request.method
+        path = request.url.path
+        client = proxies.client_ip(
+            request.client.host if request.client else None,
+            request.headers.get("x-forwarded-for"),
+        )
+        declared = request.headers.get("content-length")
+        if declared is not None:
+            try:
+                too_large = int(declared) > body_limit
+            except ValueError:
+                too_large = False
+            if too_large:
+                metrics.request_started()
+                metrics.request_finished(method, path, 413, 0.0)
+                _log(
+                    "request",
+                    request_id=rid,
+                    method=method,
+                    path=path,
+                    status=413,
+                    client=client,
+                    reason="body_too_large",
+                )
+                return JSONResponse(
+                    {"detail": f"request body exceeds {body_limit} bytes"},
+                    status_code=413,
+                    headers={"X-Request-ID": rid},
+                )
+        metrics.request_started()
+        start = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            metrics.request_finished(method, path, 500, time.perf_counter() - start)
+            _log(
+                "request_error",
+                request_id=rid,
+                method=method,
+                path=path,
+                status=500,
+                client=client,
+            )
+            raise
+        elapsed = time.perf_counter() - start
+        response.headers["X-Request-ID"] = rid
+        metrics.request_finished(method, path, response.status_code, elapsed)
+        _log(
+            "request",
+            request_id=rid,
+            method=method,
+            path=path,
+            status=response.status_code,
+            latency_s=round(elapsed, 4),
+            client=client,
+            key_id=request.scope.get("key_id"),
+        )
+        return response
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -255,6 +432,8 @@ def create_app(
 
     @app.get("/v1/models")
     def models() -> dict[str, Any]:
+        if ENGINE is None:
+            raise HTTPException(503, "model not ready")
         card = ModelCard(
             id=ENGINE.model_version,
             head=str(ENGINE.meta.get("head_config", {}).get("type", "?")),
@@ -262,34 +441,55 @@ def create_app(
         )
         return {"data": [card.model_dump()]}
 
+    @app.get("/metrics")
+    def prometheus_metrics():
+        if not metrics_on:
+            raise HTTPException(404, "metrics disabled")
+        rendered = metrics.render()
+        if rendered is None:
+            raise HTTPException(
+                503,
+                "metrics unavailable: install the serve extra (prometheus-client)"
+                if not PROMETHEUS_AVAILABLE
+                else "metrics unavailable",
+            )
+        body, content_type = rendered
+        return Response(content=body, media_type=content_type)
+
     @app.post("/v1/decide")
     def decide(
         req: DecisionRequest,
         request: Request,
-        _: None = Depends(require_token),
-        __: None = Depends(rate_limit),
+        auth: AuthContext = Depends(require_token),
+        _: None = Depends(rate_limit),
+        __: None = Depends(limit_concurrency),
     ):
+        _require_scope(auth, "decide")
         if not READY or ENGINE is None:
             raise HTTPException(503, "model not ready")
-        rid = request.headers.get("x-request-id", uuid.uuid4().hex[:12])
+        rid = getattr(request.state, "request_id", None)
         _check_size(req)
         t0 = time.perf_counter()
         try:
             resp = ENGINE.decide(req)
         except ValueError as e:
+            metrics.inference_error(_error_type(e))
             _log("decide_invalid", request_id=rid, error_type=_error_type(e))
             raise HTTPException(422, str(e)) from e
         except torch.cuda.OutOfMemoryError as e:
+            metrics.inference_error(_error_type(e))
             _log("decide_oom", request_id=rid, error_type=_error_type(e))
             raise HTTPException(
                 503, "out of memory: retry with fewer questions or lower max_state_tokens"
             ) from e
         except Exception as e:  # noqa: BLE001
+            metrics.inference_error(_error_type(e))
             _log("decide_error", request_id=rid, error_type=_error_type(e))
             raise HTTPException(500, "internal error") from e
         _log(
             "decide",
             request_id=rid,
+            key_id=auth.key_id,
             questions=len(req.questions),
             latency_s=round(time.perf_counter() - t0, 4),
         )
@@ -298,14 +498,18 @@ def create_app(
     @app.post("/v1/answer")
     def answer(
         body: dict[str, Any],
-        _: None = Depends(require_token),
-        __: None = Depends(rate_limit),
+        request: Request,
+        auth: AuthContext = Depends(require_token),
+        _: None = Depends(rate_limit),
+        __: None = Depends(limit_concurrency),
     ):
         """Compatibility adapter for the reference ecosystem's answer()
         protocol: {state, question:{type, instructions, criteria, label?}} ->
         {choice, probabilities} / {score, probabilities} / {noul}."""
+        _require_scope(auth, "answer")
         if not READY or ENGINE is None:
             raise HTTPException(503, "model not ready")
+        rid = getattr(request.state, "request_id", None)
         try:
             from .data import question_to_choices
 
@@ -313,17 +517,22 @@ def create_app(
             choices, _ = question_to_choices(q)
             if len(choices) > MAX_CANDIDATES:
                 raise HTTPException(413, "too many candidates")
-            req = DecisionRequest(
-                state=body["state"],
-                questions=[
-                    {
-                        "id": "q0",
-                        "type": q["type"],
-                        "question": q["instructions"],
-                        "candidates": [{"id": str(i), "text": c} for i, c in enumerate(choices)],
-                    }
-                ],
+            req = DecisionRequest.model_validate(
+                {
+                    "state": body["state"],
+                    "questions": [
+                        {
+                            "id": "q0",
+                            "type": q["type"],
+                            "question": q["instructions"],
+                            "candidates": [
+                                {"id": str(i), "text": c} for i, c in enumerate(choices)
+                            ],
+                        }
+                    ],
+                }
             )
+            _check_size(req)
             resp = ENGINE.decide(req)
             r = resp.results[0]
             probs = [s.score for s in r.scores]
@@ -339,7 +548,8 @@ def create_app(
         except HTTPException:
             raise
         except (KeyError, ValueError) as e:
-            _log("answer_invalid", error_type=_error_type(e))
+            metrics.inference_error(_error_type(e))
+            _log("answer_invalid", request_id=rid, key_id=auth.key_id, error_type=_error_type(e))
             raise HTTPException(422, f"invalid answer payload: {e}") from e
 
     @app.get("/demo", response_class=HTMLResponse)
@@ -366,6 +576,7 @@ ignore:Ignore the incident.</textarea></label><br><br>
  document.getElementById('out').textContent=JSON.stringify(await r.json(),null,2);
 }</script></body></html>"""
 
+    configure_tracing(app)
     return app
 
 

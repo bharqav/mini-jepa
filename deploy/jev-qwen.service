@@ -1,0 +1,36 @@
+[Unit]
+Description=jev-qwen decision API
+Documentation=https://github.com/bharqav/mini-jepa/blob/main/docs/production.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jev
+Group=jev
+WorkingDirectory=/opt/mini-jepa
+EnvironmentFile=/etc/jev-qwen/jev-qwen.env
+ExecStart=/opt/mini-jepa/.venv/bin/python -m uvicorn jev_qwen.api:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+ReadWritePaths=/var/lib/jev-qwen
+ReadOnlyPaths=/opt/mini-jepa /models
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
