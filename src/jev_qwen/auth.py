@@ -2,7 +2,7 @@
 
 The service accepts multiple bearer tokens so keys can be rotated without
 downtime and scoped to individual endpoints. Tokens are 256-bit random values,
-so they are stored as keyed HMAC-SHA-256 digests and compared with
+so they are stored as PBKDF2-HMAC-SHA-256 digests and compared with
 :func:`hmac.compare_digest`; the plaintext token is never kept in the registry
 after startup.
 
@@ -40,11 +40,14 @@ from pathlib import Path
 
 SCOPES = frozenset({"decide", "answer"})
 _KEY_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
-_TOKEN_HASH_KEY = b"jev-qwen/api-key-digest/v1"
+_TOKEN_HASH_SALT = b"jev-qwen/api-key-digest/v1"
+_TOKEN_HASH_ITERATIONS = 10_000
 
 
 def _token_digest(token: str) -> bytes:
-    return hmac.new(_TOKEN_HASH_KEY, token.encode("utf-8"), hashlib.sha256).digest()
+    return hashlib.pbkdf2_hmac(
+        "sha256", token.encode("utf-8"), _TOKEN_HASH_SALT, _TOKEN_HASH_ITERATIONS
+    )
 
 
 @dataclass(frozen=True)
