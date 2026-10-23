@@ -99,8 +99,10 @@ overhead for a metric already known to be ~1e-7.
 ## Known gaps (honest)
 - No authorisation or user model: one bearer token grants both inference
   endpoints. No per-tenant isolation.
-- Rate limiting is per process, not cluster-wide; a multi-replica deployment
-  needs a shared store or edge limiter.
+- Rate limiting is per client within one instance, not cluster-wide; a
+  multi-replica deployment needs a shared store or edge limiter. Behind a
+  proxy every request shares the proxy address unless the edge limits per
+  client.
 - TLS is not terminated in-process. A reverse proxy is required; the example
   nginx config has not been load-tested as part of this repo.
 - Single-process; no queueing or horizontal scaling.

@@ -39,7 +39,7 @@ security: ## Scan for committed secrets
 	$(BIN)/python scripts/security_scan.py
 
 audit: ## Scan installed dependencies for known vulnerabilities
-	$(BIN)/python -m pip install pip-audit --quiet
+	$(BIN)/python -m pip install --upgrade pip-audit setuptools --quiet
 	$(BIN)/python -m pip_audit --skip-editable
 
 docs: ## Validate markdown links and mermaid blocks
