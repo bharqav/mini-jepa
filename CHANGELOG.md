@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `JEV_API_KEYS_FILE` accepts a JSON map of key id to token or
   `{token, scopes, rps, burst}`. Keys can be limited to `decide` and/or
   `answer`, carry an independent per-key quota, and multiple keys can be active
-  for rotation. Tokens are stored as SHA-256 digests and compared with
+  for rotation. Tokens are stored as keyed HMAC-SHA-256 digests and compared with
   `hmac.compare_digest`; the legacy `JEV_API_TOKEN` path remains.
 - **Trusted-proxy client resolution.** `JEV_TRUSTED_PROXIES` lists CIDRs whose
   `X-Forwarded-For` may be used for client attribution and per-client rate

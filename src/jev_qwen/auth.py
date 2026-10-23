@@ -1,9 +1,10 @@
 """API key registry and client-address resolution.
 
 The service accepts multiple bearer tokens so keys can be rotated without
-downtime and scoped to individual endpoints. Tokens are stored as SHA-256
-digests and compared with :func:`hmac.compare_digest`; the plaintext token is
-never kept in the registry after startup.
+downtime and scoped to individual endpoints. Tokens are 256-bit random values,
+so they are stored as keyed HMAC-SHA-256 digests and compared with
+:func:`hmac.compare_digest`; the plaintext token is never kept in the registry
+after startup.
 
 Configuration (environment):
 
@@ -39,16 +40,17 @@ from pathlib import Path
 
 SCOPES = frozenset({"decide", "answer"})
 _KEY_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+_TOKEN_HASH_KEY = b"jev-qwen/api-key-digest/v1"
 
 
 def _token_digest(token: str) -> bytes:
-    return hashlib.sha256(token.encode("utf-8")).digest()
+    return hmac.new(_TOKEN_HASH_KEY, token.encode("utf-8"), hashlib.sha256).digest()
 
 
 @dataclass(frozen=True)
 class ApiKey:
     key_id: str
-    token_sha256: bytes
+    token_digest: bytes
     scopes: frozenset[str]
     rps: float | None = None
     burst: float | None = None
@@ -105,7 +107,7 @@ def _parse_key(key_id: str, value: object, source: str) -> ApiKey:
         raise ValueError(f"{source}: key {key_id!r} has an empty token")
     return ApiKey(
         key_id=key_id,
-        token_sha256=_token_digest(token),
+        token_digest=_token_digest(token),
         scopes=scopes,
         rps=rps,
         burst=burst,
@@ -130,17 +132,17 @@ def _reject_duplicates(keys: list[ApiKey], source: str) -> None:
     for key in keys:
         if key.key_id in seen_ids:
             raise ValueError(f"{source}: duplicate key id {key.key_id!r}")
-        if key.token_sha256 in seen_tokens:
+        if key.token_digest in seen_tokens:
             raise ValueError(f"{source}: duplicate token for key {key.key_id!r}")
         seen_ids.add(key.key_id)
-        seen_tokens.add(key.token_sha256)
+        seen_tokens.add(key.token_digest)
 
 
 def single_key(token: str, key_id: str = "default") -> ApiKey:
     token = token.strip()
     if not token:
         raise ValueError("API token must not be empty")
-    return ApiKey(key_id=key_id, token_sha256=_token_digest(token), scopes=SCOPES)
+    return ApiKey(key_id=key_id, token_digest=_token_digest(token), scopes=SCOPES)
 
 
 def load_keys_from_env(env: Mapping[str, str] | None = None) -> list[ApiKey]:
@@ -183,7 +185,7 @@ class ApiKeyRegistry:
         digest = _token_digest(token)
         found: ApiKey | None = None
         for key in self._keys:
-            if hmac.compare_digest(digest, key.token_sha256):
+            if hmac.compare_digest(digest, key.token_digest):
                 found = key
         return found
 

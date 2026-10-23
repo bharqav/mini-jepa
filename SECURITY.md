@@ -38,7 +38,7 @@ commercial product with a security team.
 - **Authentication**, `/v1/decide` and `/v1/answer` require a bearer token.
   Keys can be scoped to `decide` and/or `answer`, carry an optional per-key
   `rps`/`burst` quota, and multiple keys can be active for rotation. Tokens are
-  stored as SHA-256 digests and compared with `hmac.compare_digest`. The
+  stored as keyed HMAC-SHA-256 digests and compared with `hmac.compare_digest`. The
   service **fails closed**: it refuses to start when no key is configured.
   Authentication is disabled only in an explicit dev mode
   (`JEV_DEV_MODE=1` or `python -m jev_qwen.api --dev`), which logs a warning at
