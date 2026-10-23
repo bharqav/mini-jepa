@@ -1,8 +1,13 @@
-.PHONY: help install install-gpu test test-real lint format format-check check security audit docs clean bench smoke jepa serve
+.PHONY: help install install-gpu test test-cov test-real lint format format-check type-check check security audit docs load-test keys docker-build clean bench smoke jepa serve
 
 PY ?= python
 VENV := .venv
 BIN := $(VENV)/Scripts
+URL ?= http://127.0.0.1:8000/v1/decide
+TOKEN ?=
+CONCURRENCY ?= 8
+DURATION ?= 30
+KEY_ID ?= local
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -10,17 +15,21 @@ help: ## Show this help
 $(BIN)/python:
 	$(PY) -m venv $(VENV)
 
-install: $(BIN)/python ## Install with dev + serve extras (CPU torch)
-	$(BIN)/python -m pip install --upgrade pip
-	$(BIN)/python -m pip install -e ".[dev]"
+install: $(BIN)/python ## Install with dev + serve extras (CPU torch, pinned)
+	$(BIN)/python -m pip install --upgrade pip setuptools
+	$(BIN)/python -m pip install -r requirements/torch-cpu.txt
+	$(BIN)/python -m pip install -c requirements/constraints.txt -e ".[dev]"
 
-install-gpu: $(BIN)/python ## Install with CUDA-enabled torch
-	$(BIN)/python -m pip install --upgrade pip
-	$(BIN)/python -m pip install torch --index-url https://download.pytorch.org/whl/cu128
-	$(BIN)/python -m pip install -e ".[dev]"
+install-gpu: $(BIN)/python ## Install with CUDA-enabled torch (cu128, pinned)
+	$(BIN)/python -m pip install --upgrade pip setuptools
+	$(BIN)/python -m pip install -r requirements/torch-cuda.txt
+	$(BIN)/python -m pip install -c requirements/constraints.txt -e ".[dev]"
 
 test: ## Run weight-free test suite
 	$(BIN)/python -m pytest tests/ -q
+
+test-cov: ## Run weight-free tests with the coverage gate
+	$(BIN)/python -m pytest tests/ -q --cov=jev_qwen --cov-branch --cov-report=term-missing
 
 test-real: ## Run full suite including real Qwen weights (downloads ~1.2GB)
 	JEV_REAL_WEIGHTS=1 $(BIN)/python -m pytest tests/ -q
@@ -35,6 +44,9 @@ format: ## Auto-format and fix
 format-check: ## Verify formatting without changing files
 	$(BIN)/python -m ruff format --check src/ tests/ scripts/
 
+type-check: ## Type-check the production surface with mypy
+	$(BIN)/python -m mypy
+
 security: ## Scan for committed secrets
 	$(BIN)/python scripts/security_scan.py
 
@@ -45,7 +57,16 @@ audit: ## Scan installed dependencies for known vulnerabilities
 docs: ## Validate markdown links and mermaid blocks
 	$(BIN)/python scripts/docs_check.py
 
-check: format-check lint test security docs ## All offline quality gates
+load-test: ## Load/soak a running API (URL=... TOKEN=... CONCURRENCY=... DURATION=...)
+	$(BIN)/python scripts/load_test.py --url $(URL) --token "$(TOKEN)" --concurrency $(CONCURRENCY) --duration $(DURATION)
+
+keys: ## Generate an API key JSON document (KEY_ID=...)
+	$(BIN)/python scripts/generate_api_keys.py --key-id $(KEY_ID)
+
+docker-build: ## Build the CPU container image
+	docker build -f deploy/Dockerfile -t jev-qwen:cpu .
+
+check: format-check lint type-check test-cov security docs ## All offline quality gates
 
 smoke: ## Tiny end-to-end training smoke (CPU, minutes)
 	$(BIN)/python scripts/train.py configs/smoke.yaml --name smoke

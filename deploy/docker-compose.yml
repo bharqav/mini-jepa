@@ -1,0 +1,99 @@
+# Reference deployment: one API replica behind nginx.
+#
+#   cp deploy/.env.example deploy/.env
+#   mkdir -p deploy/secrets deploy/certs
+#   python scripts/generate_api_keys.py > deploy/secrets/api_keys.json
+#   # put fullchain.pem/privkey.pem in deploy/certs, then:
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#
+# For more than one API replica, add a shared rate-limit store or keep the
+# limiter at the edge; the in-process limiter is per instance by design.
+
+name: jev-qwen
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: jev-qwen:cpu
+    environment:
+      JEV_CHECKPOINT: /models/checkpoint
+      JEV_API_KEYS_FILE: /run/secrets/api_keys
+      JEV_TRUSTED_PROXIES: 172.30.0.0/24
+      JEV_LOG_LEVEL: ${JEV_LOG_LEVEL:-INFO}
+      JEV_RATE_LIMIT_RPS: ${JEV_RATE_LIMIT_RPS:-20}
+      JEV_RATE_LIMIT_BURST: ${JEV_RATE_LIMIT_BURST:-40}
+      JEV_RATE_LIMIT_MAX_CLIENTS: ${JEV_RATE_LIMIT_MAX_CLIENTS:-4096}
+      JEV_MAX_CONCURRENCY: ${JEV_MAX_CONCURRENCY:-1}
+      JEV_MAX_BODY_BYTES: ${JEV_MAX_BODY_BYTES:-1000000}
+      JEV_METRICS_ENABLED: "1"
+      HF_HOME: /var/lib/jev-qwen/hf
+    volumes:
+      - ${JEV_MODEL_DIR:-../checkpoints}:/models:ro
+      - jev_cache:/var/lib/jev-qwen
+    secrets:
+      - api_keys
+    expose:
+      - "8000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      start_period: 180s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - backend
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    volumes:
+      - ./nginx.conf.example:/etc/nginx/nginx.conf:ro
+      - ${JEV_CERT_DIR:-./certs}:/etc/nginx/certs:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:rw,noexec,nosuid,size=64m
+      - /var/run:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    restart: unless-stopped
+    networks:
+      - backend
+
+volumes:
+  jev_cache:
+
+networks:
+  backend:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+secrets:
+  api_keys:
+    file: ./secrets/api_keys.json

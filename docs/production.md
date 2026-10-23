@@ -8,29 +8,34 @@ What "production ready" means for this project, and what is verified.
 | model loaded once at startup, never per request | verified |
 | `/health` liveness (always 200 while process up) | verified |
 | `/ready` readiness (503 until weights resident) | verified |
-| bearer auth on `/v1/decide` and `/v1/answer`; fail closed without a token | verified |
+| bearer auth on `/v1/decide` and `/v1/answer`; fail closed without a key | verified |
+| scoped keys (`decide`, `answer`) with optional per-key `rps`/`burst`; multiple keys supported for rotation | verified |
 | explicit dev mode (`JEV_DEV_MODE=1` / `--dev`) disables auth and logs a warning | verified |
-| request limits: state chars, question count, candidate count → 413 | verified (25000-char state → 413, 40 questions → 413) |
+| request limits: body bytes, state chars, question count, candidate count → 413 | verified (1MB body, 25000-char state, 40 questions, 64 candidates) |
 | invalid schema → 422, never a fabricated prediction | verified |
-| in-process, per-client token-bucket rate limiting → 429 + `Retry-After` | verified |
-| CUDA OOM → chunk halving + retry, 503 only if unrecoverable | implemented, CPU-tested path |
+| in-process per-client token-bucket rate limiting → 429 + `Retry-After`; per-key quota independent | verified |
+| bounded concurrency (`JEV_MAX_CONCURRENCY`, 0 = unbounded) → 503 with `Retry-After: 1` when full | verified |
+| Prometheus metrics at `/metrics` (when enabled) | verified |
+| optional OpenTelemetry tracing (`JEV_OTEL_ENABLED`) | implemented |
 | structured JSON logs (`event`, `request_id`, `latency_s`, `error_type`) | verified |
-| request bodies, candidate text and tokens absent from logs | tested (canary strings) |
+| structured access logs with client + key id, no bodies/tokens | verified |
 | graceful shutdown releases the model | implemented |
 | TLS termination | **not in-process**; reverse proxy required (`deploy/nginx.conf.example`) |
 
-Tunables via env: `JEV_CHECKPOINT`, `JEV_API_TOKEN`, `JEV_DEV_MODE`,
+Tunables via env: `JEV_CHECKPOINT`, `JEV_API_TOKEN`, `JEV_API_KEYS`,
+`JEV_API_KEYS_FILE`, `JEV_DEV_MODE`, `JEV_TRUSTED_PROXIES`,
 `JEV_RATE_LIMIT_RPS`, `JEV_RATE_LIMIT_BURST`,
-`JEV_RATE_LIMIT_MAX_CLIENTS`, `JEV_MAX_STATE_CHARS`,
-`JEV_MAX_QUESTIONS`, `JEV_MAX_CANDIDATES`, `JEV_LOG_LEVEL`.
+`JEV_RATE_LIMIT_MAX_CLIENTS`, `JEV_MAX_CONCURRENCY`, `JEV_MAX_BODY_BYTES`,
+`JEV_MAX_STATE_CHARS`, `JEV_MAX_QUESTIONS`, `JEV_MAX_CANDIDATES`,
+`JEV_METRICS_ENABLED`, `JEV_LOG_LEVEL`, `JEV_OTEL_ENABLED`, `JEV_OTEL_ENDPOINT`,
+`JEV_OTEL_SERVICE_NAME`.
 
-The rate limiter keeps one bucket per peer address, bounded to
-`JEV_RATE_LIMIT_MAX_CLIENTS` (least-recently-used evicted), so a noisy client
-cannot exhaust another client's budget on the same instance. It is still a
-single-process design: with N replicas the effective limit is N times the
-configured rate, and there is no shared store. Behind a reverse proxy all
-requests share the proxy address unless the edge performs its own per-client
-limiting; the app does not trust `X-Forwarded-For`.
+The limiter keeps one bucket per peer address (bounded LRU) and one bucket per
+key with a per-key override. With N replicas each instance enforces its own
+budget, so the effective cluster limit is N times the configured rate; there is
+no shared store. Behind a reverse proxy the client address is taken from
+`X-Forwarded-For` only when the peer is in `JEV_TRUSTED_PROXIES`; the app never
+trusts the header blindly.
 
 ## Checkpoints and hub fetches
 - `save_checkpoint` writes `head.safetensors`; `load_checkpoint` reads only
@@ -100,24 +105,26 @@ unbatched forwards, so a full sweep over thousands of rows is minutes of
 overhead for a metric already known to be ~1e-7.
 
 ## Known gaps (honest)
-- No authorisation or user model: one bearer token grants both inference
-  endpoints. No per-tenant isolation.
-- Rate limiting is per client within one instance, not cluster-wide; a
-  multi-replica deployment needs a shared store or edge limiter. Behind a
-  proxy every request shares the proxy address unless the edge limits per
-  client.
+- No authorisation or user model: one key grants inference; no per-user
+  quotas, scopes beyond decide/answer, or audit trail per user (auth failures
+  are audited by key and client).
+- Rate limiting is per instance, not cluster-wide; a multi-replica deployment
+  needs a shared store or edge limiter. Per-key quotas are enforced
+  independently of the per-client bucket.
 - TLS is not terminated in-process. A reverse proxy is required; the example
   nginx config has not been load-tested as part of this repo.
-- Single-process; no queueing or horizontal scaling.
-- No dependency lockfile: installs use lower-bound ranges, so two builds can
-  resolve different versions. CI catches known vulnerabilities but not
-  arbitrary version drift.
-- No container image, systemd unit, or orchestration manifest; only the nginx
-  example. No metrics, tracing, alerting or request-ID propagation on every
-  endpoint, only structured logs.
-- No API load/soak test, coverage threshold, or static type checking. The
-  suite is behavioral (72 tests, 5 weight-gated) and CI runs Python 3.12 only,
-  despite the package declaring 3.10+.
+- Single-process; no queueing or horizontal scaling. Bounded concurrency via
+  `JEV_MAX_CONCURRENCY`.
+- No committed dependency lock file for the whole stack; CI uses
+  `requirements/constraints.txt` with a pinned torch build (CPU/cu128), and a
+  uv-based lock is a candidate follow-up.
+- No API load/soak run is wired into CI; `scripts/load_test.py` is the harness
+  and its pure logic is under test.
+- No full-repo mypy gate; the CI type check covers the production surface
+  (api, auth, metrics, tracing, load_test) plus the script, not the whole
+  training stack.
+- Coverage gate is set at 60% on the weight-free suite; training and evaluation
+  paths are not fully measured without weights.
 - No dataset or backbone licence review for redistribution; the MIT licence
   covers this repository's code only.
 - The external teacher has been tested against a local HTTP server with real

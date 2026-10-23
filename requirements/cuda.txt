@@ -1,8 +1,13 @@
-# Windows CUDA install (RTX 5060, CUDA 13.x driver):
+# Windows/Linux CUDA 12.8 install (RTX 50-series / Blackwell):
 #   python -m venv .venv
-#   .venv\Scripts\activate
-#   pip install torch --index-url https://download.pytorch.org/whl/cu128
-#   pip install -r requirements\base.txt
+#   .venv\Scripts\activate            (or: source .venv/bin/activate)
+#   pip install -r requirements\torch-cuda.txt
+#   pip install -c requirements\constraints.txt -r requirements\base.txt
+#
 # CPU-only fallback (functional tests, no training speed):
-#   pip install -r requirements\base.txt
+#   pip install -r requirements\torch-cpu.txt
+#   pip install -c requirements\constraints.txt -r requirements\base.txt
+#
+# The constraints file pins transitive dependencies but deliberately omits
+# torch and the CUDA/NVIDIA wheels so CPU and cu128 installs can share it.
 -r base.txt

@@ -13,11 +13,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+
 jobs:
   quality:
-    name: lint / test / security
+    name: lint / types / test / security
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -26,11 +30,11 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install dependencies
+      - name: Install pinned dependencies
         run: |
           python -m pip install --upgrade pip setuptools
-          pip install --index-url https://download.pytorch.org/whl/cpu torch
-          pip install -e ".[dev]"
+          pip install -r requirements/torch-cpu.txt
+          pip install -c requirements/constraints.txt -e ".[dev]"
 
       - name: Lint (ruff)
         run: ruff check src/ tests/ scripts/
@@ -38,8 +42,11 @@ jobs:
       - name: Format check (ruff)
         run: ruff format --check src/ tests/ scripts/
 
-      - name: Tests (no model weights required)
-        run: pytest tests/ -v
+      - name: Type check (mypy, production surface)
+        run: mypy
+
+      - name: Tests with coverage gate
+        run: pytest tests/ -q --cov=jev_qwen --cov-branch --cov-report=term-missing
 
       - name: Secret scan
         run: python scripts/security_scan.py
@@ -55,6 +62,31 @@ jobs:
       - name: Import smoke (package is installable and importable)
         run: python -c "import jev_qwen, jev_qwen.jepa, jev_qwen.model, jev_qwen.schema; print('import ok')"
 
+  test-matrix:
+    name: tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install pinned dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools
+          pip install -r requirements/torch-cpu.txt
+          pip install -c requirements/constraints.txt -e ".[dev]"
+
+      - name: Tests (no model weights required)
+        run: pytest tests/ -q
+
   weights:
     name: integration (real Qwen3-0.6B)
     runs-on: ubuntu-latest
@@ -67,11 +99,11 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install dependencies
+      - name: Install pinned dependencies
         run: |
           python -m pip install --upgrade pip setuptools
-          pip install --index-url https://download.pytorch.org/whl/cpu torch
-          pip install -e ".[dev]"
+          pip install -r requirements/torch-cpu.txt
+          pip install -c requirements/constraints.txt -e ".[dev]"
 
       - name: Cache Hugging Face weights
         uses: actions/cache@v4
@@ -85,3 +117,16 @@ jobs:
           JEV_REAL_WEIGHTS: "1"
           HF_HUB_DISABLE_PROGRESS_BARS: "1"
         run: pytest tests/ -v --tb=short
+
+  container:
+    name: container build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build CPU image
+        run: docker build -f deploy/Dockerfile -t jev-qwen:ci .
+
+      - name: Smoke import in image
+        run: docker run --rm jev-qwen:ci python -c "import jev_qwen, prometheus_client; print('image ok')"

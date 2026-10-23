@@ -5,6 +5,7 @@ __pycache__/
 
 # Virtual environments
 .venv/
+.venv*/
 venv/
 env/
 ENV/
@@ -61,3 +62,12 @@ desktop.ini
 
 # Logs
 *.log
+
+# Deployment secrets and local certificates
+deploy/secrets/*
+!deploy/secrets/.gitkeep
+deploy/certs/*
+!deploy/certs/.gitkeep
+deploy/.env
+
+.freebuff/

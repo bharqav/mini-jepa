@@ -1,0 +1,4 @@
+# CPU wheels for CI and CPU-only serving.
+# Install before requirements/constraints.txt so pip keeps this torch build.
+--index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1

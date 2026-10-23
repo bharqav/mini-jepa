@@ -12,6 +12,10 @@ if (ROOT / "SECURITY.md").exists():
     docs.append(ROOT / "SECURITY.md")
 if (ROOT / "CHANGELOG.md").exists():
     docs.append(ROOT / "CHANGELOG.md")
+if (ROOT / "THIRD_PARTY_NOTICES.md").exists():
+    docs.append(ROOT / "THIRD_PARTY_NOTICES.md")
+if (ROOT / "deploy" / "README.md").exists():
+    docs.append(ROOT / "deploy" / "README.md")
 
 LINK = re.compile(r"\[[^\]]*\]\(([^)#][^)]*)\)")
 BAD_LINK_TOKENS = ("http://", "https://", "mailto:")
