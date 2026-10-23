@@ -20,7 +20,8 @@ What "production ready" means for this project, and what is verified.
 | TLS termination | **not in-process**; reverse proxy required (`deploy/nginx.conf.example`) |
 
 Tunables via env: `JEV_CHECKPOINT`, `JEV_API_TOKEN`, `JEV_DEV_MODE`,
-`JEV_RATE_LIMIT_RPS`, `JEV_RATE_LIMIT_BURST`, `JEV_MAX_STATE_CHARS`,
+`JEV_RATE_LIMIT_RPS`, `JEV_RATE_LIMIT_BURST`,
+`JEV_RATE_LIMIT_MAX_CLIENTS`, `JEV_MAX_STATE_CHARS`,
 `JEV_MAX_QUESTIONS`, `JEV_MAX_CANDIDATES`, `JEV_LOG_LEVEL`.
 
 The rate limiter keeps one bucket per peer address, bounded to
@@ -69,14 +70,16 @@ Five identical requests returned **max score delta 0.0** on GPU. Note that
 
 ## Uncertainty
 `jev_qwen.stats` provides percentile bootstrap CIs over evaluation rows and
-cross-seed aggregation (`seed_report.py`). Used to show the head comparison
-is significant (t=3.26 over 3 seeds) rather than asserting it.
+cross-seed aggregation (`seed_report.py`). This is what showed that the
+1-epoch head comparison is significant (t = 3.26 over 3 seeds) and that the
+3-epoch comparison is not (t ≈ 1.10) rather than asserting either.
 
 ## Stratified evaluation
 `scripts/evaluate.py` writes `eval_domains.json`: accuracy with 95% bootstrap
 CIs per **domain** and per **candidate count**. Row metadata travels inside
 the batch (never positional zipping) so length bucketing cannot misalign it.
-Measured degradation: 0.665 at C=2 → 0.463 at C=6 → 0.392 at C=8.
+Measured degradation (seed-0 checkpoint, choice questions):
+0.665 at C=2 → 0.463 at C=6 → 0.392 at C=8.
 
 Caveat found the hard way: `datasets` serves mapped tables from an on-disk
 cache whose fingerprint does not track changes to a module-level function.
@@ -106,9 +109,22 @@ overhead for a metric already known to be ~1e-7.
 - TLS is not terminated in-process. A reverse proxy is required; the example
   nginx config has not been load-tested as part of this repo.
 - Single-process; no queueing or horizontal scaling.
+- No dependency lockfile: installs use lower-bound ranges, so two builds can
+  resolve different versions. CI catches known vulnerabilities but not
+  arbitrary version drift.
+- No container image, systemd unit, or orchestration manifest; only the nginx
+  example. No metrics, tracing, alerting or request-ID propagation on every
+  endpoint, only structured logs.
+- No API load/soak test, coverage threshold, or static type checking. The
+  suite is behavioral (72 tests, 5 weight-gated) and CI runs Python 3.12 only,
+  despite the package declaring 3.10+.
+- No dataset or backbone licence review for redistribution; the MIT licence
+  covers this repository's code only.
 - The external teacher has been tested against a local HTTP server with real
   sockets and status codes, but never against an actual paid provider.
-- 3-epoch headline numbers are single-seed (only the 1-epoch comparison has a
-  3-seed variance study).
+- 3-epoch headline numbers are a 3-seed mean ± std; the 5-epoch point in the
+  epoch-scaling ablation is still a single seed, so the epoch choice itself is
+  not established across seeds. The 3-epoch compat/reference gap is not
+  significant (t ≈ 1.10).
 - Accuracy degrades sharply with candidate count (0.665 at C=2 → 0.392 at
   C=8); many-way choice is the clear weak spot.

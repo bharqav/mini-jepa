@@ -4,7 +4,7 @@
 
 ### Order-invariant decision models and a JEPA-style latent predictor on a truncated Qwen3 backbone
 
-**Zero-token inference · Exact candidate-order invariance · Calibrated probabilities · EMA-target self-supervision**
+**Zero-token inference · Near-exact candidate-order invariance · Calibrated probabilities · EMA-target self-supervision**
 
 [![CI](https://github.com/bharqav/mini-jepa/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/bharqav/mini-jepa/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/bharqav/mini-jepa/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/bharqav/mini-jepa/actions/workflows/codeql.yml)
@@ -128,12 +128,29 @@ selection. See [`results/`](results/) and [`docs/experiments.md`](docs/experimen
 
 **Backbone:** `Qwen/Qwen3-0.6B`, first 12 of 28 layers, LoRA on the last 4.
 
-### Head comparison, 3 epochs, identical data, budget and seed
+### Head comparison, 3 epochs, 3 seeds, identical data and budget
 
-| System | Accuracy | NLL | ECE | choice | noul | score | AUC | head-order TV |
-|--------|----------|-----|-----|--------|------|-------|-----|----------------|
-| reference `ChoiceHead` | 0.581 | 0.906 | 0.047 | 0.545 | 0.645 | 0.510 | 0.712 | 3.4e-6 |
-| **`CompatHead` (default)** | **0.600** | **0.874** | **0.048** | **0.567** | **0.665** | **0.514** | **0.743** | **0.0** |
+Mean ± sample std across seeds 0, 1 and 2. Seed 0 is the original run
+re-evaluated with the pinned dataset/model revisions and the current test
+loader; seeds 1 and 2 were trained with the pinned revisions.
+
+| System | Accuracy | NLL | Brier | ECE | choice | noul | score | macro-F1 | AUC | head-order TV |
+|--------|----------|-----|-------|-----|--------|------|-------|----------|-----|----------------|
+| reference `ChoiceHead` | 0.629 ± 0.031 | 0.799 ± 0.052 | 0.456 ± 0.030 | **0.029 ± 0.010** | 0.595 ± 0.043 | 0.709 ± 0.025 | 0.477 ± 0.010 | 0.640 ± 0.034 | 0.779 ± 0.023 | 2.4e-6 |
+| **`CompatHead` (default)** | **0.667 ± 0.053** | **0.734 ± 0.084** | **0.422 ± 0.049** | 0.041 ± 0.003 | **0.662 ± 0.089** | **0.718 ± 0.019** | **0.510 ± 0.046** | **0.730 ± 0.050** | **0.808 ± 0.021** | **9.0e-8** |
+
+Per-seed accuracy:
+
+| System | seed 0 | seed 1 | seed 2 |
+|--------|--------|--------|--------|
+| `CompatHead` | 0.6065 | 0.6935 | 0.7015 |
+| `ChoiceHead` | 0.5950 | 0.6545 | 0.6365 |
+
+The single-seed table this replaces reported 0.600 vs 0.581. With three seeds
+the compat gap is +0.0385 (SE 0.0352, t ≈ 1.10), **not significant at 95%**.
+The compat head is higher for every seed, but the seed spread is large enough
+that a 3-epoch accuracy advantage is not established. The reference head is
+better calibrated at this budget (ECE 0.029 vs 0.041).
 
 ### Seed variance, 3 seeds per system, 1 epoch
 
@@ -142,8 +159,11 @@ selection. See [`results/`](results/) and [`docs/experiments.md`](docs/experimen
 | `CompatHead` | **0.5593** | **0.0008** | 0.5585, 0.5600, 0.5595 |
 | `ChoiceHead` | 0.5247 | 0.0184 | 0.5050, 0.5415, 0.5275 |
 
-Δ = +0.035, t = 3.26 (**significant at 95%**). Every `CompatHead` run beats
-every `ChoiceHead` run, and the compat head is ~23× more seed-stable.
+Δ = +0.035, t = 3.26 (**significant at 95%**). At 1 epoch every `CompatHead`
+run beats every `ChoiceHead` run, and the compat head is ~23× more
+seed-stable. That stability does **not** carry to 3 epochs: there the compat
+std is 0.053 vs 0.031 for the reference head, so the 1-epoch result should not
+be generalized.
 
 ### On order invariance, two different guarantees
 
@@ -151,14 +171,15 @@ These are routinely conflated, so this project measures them separately:
 
 | Level | What is permuted | `CompatHead` | `ChoiceHead` |
 |-------|------------------|--------------|--------------|
-| **Head-level** | `choice_read_idx` inside a fixed tokenised batch | **exactly 0.0** | 3.4e-6 TV |
+| **Head-level** | `choice_read_idx` inside a fixed tokenised batch | **≤9e-8 TV** | 2.4e-6 TV |
 | **End-to-end** | the token sequence itself (full re-tokenisation) | **~3.2e-3** max Δ | not measured |
 
-The head is exactly invariant by construction: each candidate is scored by a
+The head is invariant by construction: each candidate is scored by a
 pure function of `(answer, candidate_i)` using shared projections. The
-end-to-end number is larger because the *answer* token attends over all
-candidates, so permuting them changes the float32 summation order inside the
-backbone. In practice the selected candidate was identical across all three
+measured residual (≤9e-8 TV) is float32 reduction order, not a dependence on
+position. The end-to-end number is larger because the *answer* token attends
+over all candidates, so permuting them changes the float32 summation order
+inside the backbone. In practice the selected candidate was identical across all three
 orderings tested, but this is not a mathematical guarantee at the pipeline
 level, only at the head level.
 
@@ -166,7 +187,7 @@ If you need strict end-to-end invariance, constrain the answer read-out (e.g.
 pool candidate representations commutatively) rather than relying on the head
 alone.
 
-### Against baselines, same held-out split
+### Against baselines, same held-out split (1 epoch)
 
 | System | Accuracy | NLL |
 |--------|----------|-----|
@@ -178,19 +199,23 @@ alone.
 The trained head exceeds zero-shot full-model generation on accuracy while
 emitting no tokens at all.
 
-### Epoch scaling
+### Epoch scaling (seed 0 only)
 
 | Epochs | 1 | 3 | 5 |
 |--------|---|---|---|
 | Accuracy | 0.559 | 0.600 | 0.614 |
 | Raw ECE | 0.021 | 0.048 | 0.082 |
 
-**3 epochs is the default**: best raw NLL and calibration. Five epochs buys
-+0.014 accuracy but the model becomes overconfident (fitted temperature 1.95).
+This ablation holds the seed fixed at 0, so it isolates training length but
+not seed noise. The 3-epoch seed-0 point (0.600) is an unlucky draw: the
+3-seed mean is 0.667 ± 0.053. Do not compare the 5-epoch single run directly
+to the multi-seed mean. At seed 0, 3 epochs still has the best NLL and
+calibration, and 5 epochs is overconfident (fitted temperature 1.95), but the
+epoch choice itself has not been rerun across seeds.
 
 ### Where it fails
 
-Accuracy by candidate count:
+Accuracy by candidate count (seed-0 checkpoint, choice questions only):
 
 | C | 2 | 3 | 4 | 5 | 6 | 8 |
 |---|---|---|---|---|---|---|
@@ -222,7 +247,7 @@ RTX 5060 (8.1 GB) via WSL2, CUDA 12.8 wheels:
 > **Alpha, research code.** Correct and tested, not fully production-hardened.
 > Security now covers bearer authentication, rate limiting, safetensors-only
 > checkpoint loading and pinned hub revisions; TLS must be terminated by a
-> reverse proxy. The 3-epoch headline figures are single-seed.
+> reverse proxy. The 3-epoch headline figures are a 3-seed mean ± std.
 > See [`docs/production.md`](docs/production.md) for an honest account of
 > what is and is not implemented.
 
@@ -432,7 +457,8 @@ src/jev_qwen/
 
 **Why:** Invariance becomes *exact at the head*. With shared projections,
 `score_i` depends only on `(answer, candidate_i)`, so permuting the read order
-cannot change any score, verified at **exactly 0.0** difference.
+cannot change any score; the measured residual is **≤9e-8 TV** (float32
+reduction order).
 
 **Alternatives:** the reference `ChoiceHead` uses self-attention across the
 candidate set. It is permutation-*equivariant* in exact arithmetic, but

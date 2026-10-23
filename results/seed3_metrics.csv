@@ -1,0 +1,7 @@
+system,seed,accuracy,nll,brier,ece,choice,noul,score,macro_f1,auc_noul,order_tv_worst,n_test,source
+compat,0,0.6065,0.8305,0.4782,0.0403,0.5610,0.6985,0.4578,0.6722,0.7836,1.19e-07,2000,original run re-evaluated with pinned revisions
+compat,1,0.6935,0.6891,0.3951,0.0395,0.6962,0.7350,0.5422,0.7610,0.8232,8.99e-08,2000,pinned-revision rerun
+compat,2,0.7015,0.6825,0.3931,0.0445,0.7295,0.7220,0.5301,0.7578,0.8168,,2000,pinned-revision rerun
+reference,0,0.5950,0.8587,0.4902,0.0410,0.5455,0.6855,0.4659,0.6053,0.7553,3.38e-06,2000,original run re-evaluated with pinned revisions
+reference,1,0.6545,0.7665,0.4361,0.0225,0.6253,0.7350,0.4859,0.6730,0.8016,2.35e-06,2000,pinned-revision rerun
+reference,2,0.6365,0.7724,0.4415,0.0248,0.6131,0.7079,0.4779,0.6412,0.7793,,2000,pinned-revision rerun
