@@ -5,7 +5,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-import jev_qwen.api as api
+from jev_qwen import api
 from jev_qwen.schema import CandidateScore, DecisionResponse, QuestionResponse
 
 
