@@ -2,6 +2,7 @@
 evaluates with the same protocol. Weight-free parts run in CI; the end-to-end
 run needs Qwen weights (JEV_REAL_WEIGHTS=1)."""
 
+import json
 import os
 import subprocess
 import sys
@@ -9,8 +10,27 @@ import sys
 import pytest
 import torch
 
+from jev_qwen.train import accumulation_schedule
+
 REAL = os.environ.get("JEV_REAL_WEIGHTS") == "1"
 needs_weights = pytest.mark.skipif(not REAL, reason="needs Qwen3-0.6B download")
+
+
+def test_accumulation_schedule_steps_partial_final_window():
+    assert accumulation_schedule(5, 2) == [
+        (2, False),
+        (2, True),
+        (2, False),
+        (2, True),
+        (1, True),
+    ]
+
+
+def test_accumulation_schedule_rejects_invalid_dimensions():
+    with pytest.raises(ValueError, match="num_batches"):
+        accumulation_schedule(0, 2)
+    with pytest.raises(ValueError, match="accumulation_steps"):
+        accumulation_schedule(5, 0)
 
 
 def test_collate_allows_unlabeled_eval_rows():
@@ -66,12 +86,16 @@ def test_tiny_training_run_saves_and_reloads(tmp_path):
             "weight_decay": 0.0,
             "warmup_ratio": 0.0,
             "grad_clip": 1.0,
+            "grad_accum_steps": 3,
         },
         "logging": {"log_every": 1, "eval_every": 100, "save_every": 100},
     }
     import jev_qwen.train as T
 
     run_dir = T.train(cfg, "ci-smoke")
+    records = [json.loads(line) for line in (run_dir / "metrics.jsonl").read_text().splitlines()]
+    train_steps = [record for record in records if record.get("split") == "train"]
+    assert [record["step"] for record in train_steps] == [1, 2, 3, 4]
     assert (run_dir / "checkpoints" / "final" / "head.safetensors").exists()
     assert (run_dir / "checkpoints" / "final" / "meta.json").exists()
     # fresh-process reload + eval (same protocol as baseline)

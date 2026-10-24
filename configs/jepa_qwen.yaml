@@ -21,6 +21,7 @@ jepa:
   mask_ratio: 0.20
   mask_span: 8
   ema_momentum: 0.996
+  ema_momentum_end: 1.0
   loss_mse: 1.0
   loss_cosine: 0.1
   var_weight: 0.1

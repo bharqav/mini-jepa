@@ -8,6 +8,7 @@ verified packed encodings.
 
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 
@@ -17,9 +18,11 @@ from .data import TASK_TYPES, collate_fn
 from .model import build_network
 from .run_logger import load_checkpoint
 from .schema import (
+    Candidate,
     CandidateScore,
     DecisionRequest,
     DecisionResponse,
+    QuestionRequest,
     QuestionResponse,
     validate_response,
 )
@@ -45,6 +48,9 @@ class DecisionEngine:
     ):
         self.device = device or get_device()
         self.precision = precision
+        # One CUDA context per process: serialize forwards so concurrent
+        # requests cannot interleave allocator state or trigger avoidable OOM.
+        self._inference_lock = threading.Lock() if self.device.type == "cuda" else None
         if deterministic:
             torch.use_deterministic_algorithms(False)  # custom 4D masks have no
             torch.backends.cudnn.deterministic = True  # deterministic kernel
@@ -86,8 +92,29 @@ class DecisionEngine:
             "decision backbone must not expose a generation path"
         )
 
-    @torch.no_grad()
+    def warmup(self) -> None:
+        """Run one tiny request so kernels/allocator are hot before traffic."""
+        req = DecisionRequest(
+            state="warmup",
+            questions=[
+                QuestionRequest(
+                    id="warmup",
+                    type="choice",
+                    question="warmup",
+                    candidates=[Candidate(id="a", text="a"), Candidate(id="b", text="b")],
+                )
+            ],
+        )
+        self.decide(req)
+
     def decide(self, req: DecisionRequest) -> DecisionResponse:
+        if self._inference_lock is None:
+            return self._decide(req)
+        with self._inference_lock:
+            return self._decide(req)
+
+    @torch.no_grad()
+    def _decide(self, req: DecisionRequest) -> DecisionResponse:
         t0 = time.perf_counter()
         if self.max_input_chars and len(req.state) > self.max_input_chars:
             raise ValueError(
@@ -174,7 +201,7 @@ class DecisionEngine:
             except torch.cuda.OutOfMemoryError:
                 if self.device.type != "cuda":
                     raise
-                if self.device == "cuda":
+                if self.device.type == "cuda":
                     torch.cuda.empty_cache()
                 if chunk == 1:
                     raise

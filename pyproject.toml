@@ -42,6 +42,9 @@ dependencies = [
   "pandas>=2.0",
 ]
 
+[project.scripts]
+jev-qwen = "jev_qwen.api:main"
+
 [project.optional-dependencies]
 serve = [
   "fastapi>=0.110",
@@ -62,6 +65,7 @@ dev = [
   "mypy>=1.10",
   "types-PyYAML>=6.0",
   "ruff>=0.6",
+  "pre-commit>=3.7",
   "fastapi>=0.110",
   "uvicorn>=0.29",
   "httpx>=0.27",
@@ -79,6 +83,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 # No `-q` here: CI and the Makefile pass their own verbosity, and combining
 # flags suppresses pytest's summary line (which quality gates parse).
 filterwarnings = ["ignore::DeprecationWarning"]

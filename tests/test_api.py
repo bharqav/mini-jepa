@@ -217,6 +217,21 @@ def test_valid_bearer_token_is_accepted():
     assert c.get("/v1/models").status_code == 200
 
 
+def test_access_log_includes_authenticated_key_id(caplog):
+    import logging
+
+    caplog.set_level(logging.INFO)
+    c = secure_client()
+    response = c.post("/v1/decide", json=GOOD, headers={"Authorization": "Bearer s3cret-token"})
+    assert response.status_code == 200
+
+    payloads = [
+        json.loads(record.message) for record in caplog.records if record.message.startswith("{")
+    ]
+    access = next(payload for payload in payloads if payload.get("event") == "request")
+    assert access["key_id"] == "default"
+
+
 def test_service_refuses_to_start_without_token_or_dev_mode(monkeypatch):
     monkeypatch.setattr(api, "DecisionEngine", StubEngine)
     app = api.create_app(api_token="", dev_mode=False, rate_limit_rps=0)
@@ -449,3 +464,24 @@ def test_concurrency_limit_rejects_excess_work():
         engine.release.set()
         thread.join(5)
     assert result["response"].status_code == 200
+
+
+def test_chunked_body_without_content_length_is_rejected():
+    api.ENGINE = StubEngine()
+    api.READY = True
+    c = TestClient(api.create_app(dev_mode=True, rate_limit_rps=0))
+    r = c.post(
+        "/v1/decide",
+        content=iter([b'{"state":"x","questions":[]}']),
+        headers={"Content-Type": "application/json"},
+    )
+    assert r.status_code == 411
+    assert "Content-Length" in r.json()["detail"]
+
+
+def test_security_headers_are_present():
+    c = client()
+    r = c.get("/health")
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    assert r.headers["Cache-Control"] == "no-store"
+    assert r.headers["Referrer-Policy"] == "no-referrer"

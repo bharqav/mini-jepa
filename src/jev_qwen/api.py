@@ -335,6 +335,9 @@ def create_app(
             )
         t0 = time.perf_counter()
         ENGINE = DecisionEngine(checkpoint=checkpoint or os.environ.get("JEV_CHECKPOINT"))
+        if _env_flag("JEV_WARMUP", False) and hasattr(ENGINE, "warmup"):
+            ENGINE.warmup()
+            _log("engine_warmed", model=ENGINE.model_version)
         READY = True
         metrics.set_ready(True)
         _log(
@@ -364,6 +367,28 @@ def create_app(
             request.headers.get("x-forwarded-for"),
         )
         declared = request.headers.get("content-length")
+        if declared is None and method in {"POST", "PUT", "PATCH"}:
+            metrics.request_started()
+            metrics.request_finished(method, path, 411, 0.0)
+            _log(
+                "request",
+                request_id=rid,
+                method=method,
+                path=path,
+                status=411,
+                client=client,
+                reason="missing_content_length",
+            )
+            return JSONResponse(
+                {"detail": "Content-Length is required for request bodies"},
+                status_code=411,
+                headers={
+                    "X-Request-ID": rid,
+                    "X-Content-Type-Options": "nosniff",
+                    "Cache-Control": "no-store",
+                    "Referrer-Policy": "no-referrer",
+                },
+            )
         if declared is not None:
             try:
                 too_large = int(declared) > body_limit
@@ -384,7 +409,12 @@ def create_app(
                 return JSONResponse(
                     {"detail": f"request body exceeds {body_limit} bytes"},
                     status_code=413,
-                    headers={"X-Request-ID": rid},
+                    headers={
+                        "X-Request-ID": rid,
+                        "X-Content-Type-Options": "nosniff",
+                        "Cache-Control": "no-store",
+                        "Referrer-Policy": "no-referrer",
+                    },
                 )
         metrics.request_started()
         start = time.perf_counter()
@@ -403,6 +433,9 @@ def create_app(
             raise
         elapsed = time.perf_counter() - start
         response.headers["X-Request-ID"] = rid
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
         metrics.request_finished(method, path, response.status_code, elapsed)
         _log(
             "request",

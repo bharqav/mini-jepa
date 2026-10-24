@@ -221,3 +221,99 @@ the next steps.
 
 Artifacts: `results/jepa_qwen_results.json`; raw runs are in the git-ignored
 `runs/` directory.
+
+## Episode 8 - Standard downstream probes (SST-2, STS-B, single seed)
+
+Added `scripts/evaluate_jepa.py`: frozen linear ridge and cosine kNN probes on
+GLUE SST-2 (accuracy) and STS-B (Spearman, retrieval), 20k train / 1k eval,
+mean pooling. Baselines are frozen Qwen3-0.6B, random-init Qwen, BERT-base MLM
+and SimCSE-BERT-base. Causal JEPA uses the frozen-target checkpoint;
+bidirectional JEPA uses the matching bidirectional probe.
+
+| task | representation | linear | kNN | R@1 | effective rank |
+|---|---|---|---|---|---|
+| SST-2 | causal JEPA | 0.828 | 0.752 | - | 165 |
+| SST-2 | frozen Qwen | 0.847 | 0.804 | - | 236 |
+| SST-2 | random Qwen | 0.575 | 0.588 | - | 157 |
+| SST-2 | BERT MLM | **0.856** | 0.812 | - | 150 |
+| SST-2 | SimCSE | 0.844 | **0.847** | - | 130 |
+| STS-B | causal JEPA | 0.462 | 0.489 | 0.267 | 369 |
+| STS-B | frozen Qwen | 0.479 | 0.557 | 0.309 | 450 |
+| STS-B | random Qwen | 0.149 | 0.166 | 0.094 | 182 |
+| STS-B | BERT MLM | 0.550 | 0.627 | 0.286 | 321 |
+| STS-B | SimCSE | **0.747** | **0.828** | **0.405** | 341 |
+| SST-2 | bidirectional JEPA | 0.698 | 0.524 | - | **2.5** |
+| SST-2 | bidirectional frozen Qwen | **0.815** | **0.734** | - | 241 |
+| STS-B | bidirectional JEPA | 0.064 | 0.128 | 0.019 | **6.4** |
+| STS-B | bidirectional frozen Qwen | **0.454** | **0.450** | **0.247** | 544 |
+
+The harness is not degenerate: frozen Qwen and SimCSE recover strong signal,
+and random Qwen is near chance on SST-2. Causal JEPA still trails frozen Qwen
+on both tasks, and trails SimCSE badly on STS-B. Effective rank reveals what
+mean-std/collapse-ratio missed: causal JEPA loses dimensions (165 vs 236,
+369 vs 450), and bidirectional JEPA is severely collapsed (rank 2.5 and 6.4)
+despite non-zero per-dimension std. Its lower latent MSE (6.42) was misleading.
+
+**Verdict:** negative. JEPA pretraining does not improve these frozen probes.
+Next: target-side VICReg or stronger EMA/stop-grad, then rerun probes across
+seeds. This is two tasks and one seed; stronger than the decision-only probe,
+not a complete JEPA benchmark.
+
+Artifacts: `results/jepa_probe_results.json`,
+`results/jepa_probe_bidir_results.json`.
+
+## Episode 9 - Context-VICReg collapse fix (negative)
+
+Added VICReg terms to masked context reps as well as the predictor
+(`configs/jepa_qwen_context_vicreg.yaml`), 2,000 steps, seed 0. Token-level
+context rank rose to 313, but EMA target and predictor collapsed (rank 5.8 and
+3.6), and mean-pooled sentence reps got worse: SST-2 linear 0.697 / kNN 0.530,
+STS-B Spearman 0.116 / 0.135, R@1 0.028, sentence rank 7.9 / 34.5 (frozen Qwen
+0.847 / 0.804, 0.479 / 0.557, 0.309, rank 236 / 450).
+
+**Verdict:** negative. Regularising context tokens does not preserve pooled
+sentence rank; target-side regularisation/whitening is the next experiment.
+Artifact: `results/jepa_probe_ctx_vicreg.json`.
+
+## Episode 10 - Anchored JEPA / top-block adaptation
+
+Frozen-target controls, 2,000 steps, seed 0:
+
+| variant | SST-2 linear / kNN | STS-B linear / kNN | STS-B R@1 | sentence rank |
+|---|---|---|---|---|
+| anchored, all context blocks, anchor 1.0 | 0.823 / 0.773 | 0.460 / **0.589** | 0.279 | 169 / 370 |
+| anchored, top-2 blocks, anchor 0.1 | 0.807 / 0.752 | 0.431 / 0.518 | 0.227 | 97 / 293 |
+| frozen Qwen | **0.847 / 0.804** | **0.479 / 0.557** | **0.309** | 236 / 450 |
+
+The full-context anchor is the best measured JEPA variant on STS-B kNN but
+still loses on SST-2 and STS-B linear/retrieval. Top-2-only adaptation is
+worse. No JEPA win; next is a multi-seed anchor sweep plus target/pooled
+whitening. Artifacts: `results/jepa_probe_anchor.json`,
+`results/jepa_probe_top2.json`.
+
+## Benchmark (idle GPU + CPU)
+
+Raw artifacts: `results/benchmark_gpu.json`, `results/benchmark_cpu.json`.
+Protocol: 12-layer `CompatHead` checkpoint, 10 repeats, warmup excluded,
+CUDA-synchronised on GPU, `time.perf_counter` on CPU.
+
+```mermaid
+flowchart LR
+    A[Benchmark protocol\n12-layer CompatHead\n10 repeats] --> B{Device?}
+    B -->|RTX 5060 WSL2| C[CUDA-synchronised\nmodel load 12.98 s\nbatch-1 med 28.0 ms\nbatch-8 med 29.1 ms\n275 q/s @ batch 8]
+    B -->|Windows CPU| D[perf_counter\nmodel load 23.04 s\nbatch-1 med 91.3 ms\nbatch-8 med 464.6 ms\n17.2 q/s @ batch 8]
+    C --> E[Peak VRAM\n1,348.9 MB allocated\n1,366.0 MB reserved]
+    D --> F[No VRAM\nmemory-bound\nbatch plateau]
+```
+
+| Context | Model load | First request | Batch 1 med / p95 | Batch 1 q/s | Batch 4 med / p95 | Batch 4 q/s | Batch 8 med / p95 | Batch 8 q/s | Peak VRAM |
+|---------|-----------|---------------|-------------------|-------------|-------------------|-------------|-------------------|-------------|-----------|
+| RTX 5060 WSL2, CUDA | 12.98 s | 1.04 s | 28.0 ms / 41.0 ms | 35.7 | 37.9 ms / 59.1 ms | 105.5 | 29.1 ms / 31.9 ms | 275.0 | 1,348.9 MB allocated / 1,366.0 MB reserved |
+| Windows CPU | 23.04 s | 131.1 ms | 91.3 ms / 107.9 ms | 11.0 | 236.1 ms / 291.2 ms | 16.9 | 464.6 ms / 551.9 ms | 17.2 | n/a |
+
+Notes:
+- CPU throughput plateaus quickly because the workload is memory-bound and the
+  batch dimension does not parallelise efficiently on x86.
+- GPU numbers are from an idle card (0% utilisation, ~648 MB VRAM free).
+- Same-seed GPU reruns are bit-identical; cross-seed variance is captured in
+  `results/seed_report.json`.

@@ -24,24 +24,31 @@ ap.add_argument("--limit", type=int, default=200)
 ap.add_argument("--cache", default="data/processed/teacher_cache.jsonl")
 args = ap.parse_args()
 
-records = [json.loads(l) for l in Path(args.inp).read_text().splitlines() if l.strip()]
-todo = [r for r in records if r.get("label") is None][: args.limit] or records[: args.limit]
-teacher = (
-    LocalLMTeacher(num_layers=args.layers) if args.teacher == "local-lm" else ExternalTeacher()
-)
-report = label_records(todo, teacher, TeacherCache(args.cache))
-with open(args.out, "w") as f:
-    for r in todo:
-        f.write(json.dumps(r) + "\n")
-print(json.dumps(report, indent=2))
-if isinstance(teacher, ExternalTeacher):
-    print(
-        json.dumps(
-            {
-                "calls": teacher.calls,
-                "failures": teacher.failures,
-                "chars_sent": teacher.chars_sent,
-            },
-            indent=2,
-        )
+
+def main() -> int:
+    records = [json.loads(l) for l in Path(args.inp).read_text().splitlines() if l.strip()]
+    todo = [r for r in records if r.get("label") is None][: args.limit] or records[: args.limit]
+    teacher = (
+        LocalLMTeacher(num_layers=args.layers) if args.teacher == "local-lm" else ExternalTeacher()
     )
+    report = label_records(todo, teacher, TeacherCache(args.cache))
+    with open(args.out, "w") as f:
+        for r in todo:
+            f.write(json.dumps(r) + "\n")
+    print(json.dumps(report, indent=2))
+    if isinstance(teacher, ExternalTeacher):
+        print(
+            json.dumps(
+                {
+                    "calls": teacher.calls,
+                    "failures": teacher.failures,
+                    "chars_sent": teacher.chars_sent,
+                },
+                indent=2,
+            )
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
