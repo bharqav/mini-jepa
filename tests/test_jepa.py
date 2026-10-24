@@ -197,3 +197,32 @@ def test_top_k_context_freezing_keeps_low_blocks_fixed():
     state, _ = make_state(train_last_k_layers=1)
     assert all(not p.requires_grad for p in state.context.blocks[0].parameters())
     assert all(p.requires_grad for p in state.context.blocks[1].parameters())
+
+
+def test_target_regularizer_adds_terms():
+    cfg = JEPAConfig(
+        hidden_dim=8,
+        regularize_target=True,
+        target_var_weight=1.0,
+        target_cov_weight=1.0,
+    )
+    pred = torch.randn(2, 6, 8)
+    target = torch.randn(2, 6, 8)
+    mask = torch.zeros(2, 6, dtype=torch.bool)
+    mask[:, 2:4] = True
+    _, parts = jepa_loss(pred, target, mask, cfg)
+    assert "var_target" in parts
+    assert "cov_target" in parts
+    assert parts["var_target"] >= 0
+    assert parts["cov_target"] >= 0
+
+
+def test_target_regularizer_can_be_disabled():
+    cfg = JEPAConfig(hidden_dim=8, regularize_target=False)
+    pred = torch.randn(2, 6, 8)
+    target = torch.randn(2, 6, 8)
+    mask = torch.zeros(2, 6, dtype=torch.bool)
+    mask[:, 2:4] = True
+    _, parts = jepa_loss(pred, target, mask, cfg)
+    assert "var_target" not in parts
+    assert "cov_target" not in parts

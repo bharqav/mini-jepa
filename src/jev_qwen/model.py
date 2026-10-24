@@ -95,22 +95,31 @@ class ChoiceHead(nn.Module):
 
 
 class CompatHead(nn.Module):
-    """Improved head: independent candidate compatibility with shared params."""
+    """Improved head: independent candidate compatibility with shared params,
+    plus lightweight candidate mixing for relative comparison across choices."""
 
-    def __init__(self, hidden_dim: int, new_dim: int, num_task_types: int):
+    def __init__(
+        self, hidden_dim: int, new_dim: int, num_task_types: int, candidate_layers: int = 1
+    ):
         super().__init__()
         self.new_dim = new_dim
         self.norm = nn.LayerNorm(hidden_dim)
+        self.candidate_mixer = nn.ModuleList(
+            [AttentionBlock(hidden_dim, new_dim) for _ in range(candidate_layers)]
+        )
         self.q_proj = nn.Linear(hidden_dim, new_dim)
         self.k_proj = nn.Linear(hidden_dim, new_dim)
         self.task_bias = nn.Embedding(num_task_types, 1)
         self.log_temp = nn.Parameter(torch.zeros(num_task_types))
 
     def forward(self, choice_embeddings, answer_embedding, choice_mask, task_type):
-        h = self.norm(torch.cat([answer_embedding.unsqueeze(1), choice_embeddings], dim=1))
-        a = self.q_proj(h[:, :1])
-        c = self.k_proj(h[:, 1:])
-        logits = torch.einsum("bqd,bcd->bc", a, c).squeeze(1) / math.sqrt(self.new_dim)
+        h = choice_embeddings
+        for layer in self.candidate_mixer:
+            h = layer(h, choice_mask)
+        h = self.norm(h)
+        a = self.q_proj(self.norm(answer_embedding))
+        c = self.k_proj(h)
+        logits = torch.einsum("bd,bcd->bc", a, c).squeeze(1) / math.sqrt(self.new_dim)
         logits = logits + self.task_bias(task_type).squeeze(-1).unsqueeze(1)
         temp = torch.exp(self.log_temp[task_type]).unsqueeze(1).clamp(0.05, 20.0)
         return (logits / temp).masked_fill(~choice_mask, -float("inf"))
@@ -194,7 +203,12 @@ def lora_target_regex(num_layers: int, last_k: int) -> str:
 def build_head(head_cfg: dict, hidden_dim: int, num_task_types: int = 3) -> nn.Module:
     t = head_cfg.get("type", "reference")
     if t == "compat":
-        return CompatHead(hidden_dim, head_cfg.get("new_dim", 512), num_task_types)
+        return CompatHead(
+            hidden_dim,
+            head_cfg.get("new_dim", 512),
+            num_task_types,
+            candidate_layers=int(head_cfg.get("candidate_layers", 1)),
+        )
     return ChoiceHead(
         hidden_dim, head_cfg.get("new_dim", 512), head_cfg.get("num_layers", 2), num_task_types
     )

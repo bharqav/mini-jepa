@@ -123,7 +123,10 @@ class DecisionEngine:
             )
         rows = []
         for q in req.questions:
-            texts = [c.text for c in q.candidates]
+            sorted_candidates = sorted(enumerate(q.candidates), key=lambda x: x[1].id)
+            orig_indices = [idx for idx, _ in sorted_candidates]
+            sorted_cands = [cand for _, cand in sorted_candidates]
+            texts = [c.text for c in sorted_cands]
             ex = encode_example(
                 req.state,
                 q.question,
@@ -135,19 +138,23 @@ class DecisionEngine:
             )
             ex["task_type"] = TASK_TYPES[q.type]
             ex["label"] = None
-            rows.append((q, ex))
+            rows.append((q, ex, orig_indices))
         logits = self._forward(rows, req.settings.max_batch)
         temp = max(float(req.settings.temperature), 1e-3)
         probs = torch.softmax(logits / temp, -1).tolist()
         out: list[QuestionResponse] = []
-        for (q, _), p in zip(rows, probs):
+        for (q, _, orig_indices), p in zip(rows, probs):
             p = p[: len(q.candidates)]
             s = sum(p)
             p = [v / s for v in p]  # exact renormalization after truncation
-            scores = [CandidateScore(id=c.id, score=v) for c, v in zip(q.candidates, p)]
-            conf = max(p)
+            # Restore original candidate order
+            reordered = [0.0] * len(p)
+            for new_idx, orig_idx in enumerate(orig_indices):
+                reordered[orig_idx] = p[new_idx]
+            scores = [CandidateScore(id=c.id, score=v) for c, v in zip(q.candidates, reordered)]
+            conf = max(reordered)
             if q.type == "choice" or q.type == "noul":
-                sel = q.candidates[p.index(conf)].id
+                sel = q.candidates[reordered.index(conf)].id
                 out.append(
                     QuestionResponse(
                         id=q.id, type=q.type, scores=scores, selected=sel, confidence=conf
@@ -181,7 +188,7 @@ class DecisionEngine:
         """Run the backbone in bounded chunks. On CUDA OOM the chunk size is
         halved and retried (up to single-question), so one oversized request
         degrades in latency instead of failing the whole call."""
-        exs = [ex for _, ex in rows]
+        exs = [ex for _, ex, *_ in rows]
         if max_batch:
             chunk = max(1, min(len(exs), int(max_batch)))
         else:

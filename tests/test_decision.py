@@ -269,3 +269,91 @@ def test_real_forward_finite():
     with torch.no_grad():
         logits = net(**{k: v for k, v in b.items() if k != "labels"})
     assert torch.isfinite(logits).all() and logits.shape == (1, 2)
+
+
+def test_deterministic_candidate_ordering_in_infer():
+    from jev_qwen.infer import DecisionEngine
+
+    class FakeTokenizer:
+        pad_token_id = 0
+        eos_token_id = 0
+
+        def encode(self, text, **kwargs):
+            return [ord(c) % 64 for c in text]
+
+    engine = DecisionEngine.__new__(DecisionEngine)
+    engine.tokenizer = FakeTokenizer()
+    engine.network = make_net("compat", 16)
+    engine.max_state_tokens = 64
+    engine.max_choice_tokens = 16
+    engine.max_input_chars = 20000
+    engine.model_version = "test"
+    engine._inference_lock = None
+    engine.device = torch.device("cpu")
+    engine.precision = "cpu"
+
+    req = type(
+        "R",
+        (),
+        {
+            "state": "s",
+            "settings": type(
+                "S",
+                (),
+                {
+                    "max_state_tokens": 64,
+                    "max_candidate_tokens": 16,
+                    "temperature": 1.0,
+                    "max_batch": None,
+                    "include_metadata": False,
+                },
+            )(),
+            "questions": [
+                type(
+                    "Q",
+                    (),
+                    {
+                        "id": "q",
+                        "type": "choice",
+                        "question": "?",
+                        "candidates": [
+                            type("C", (), {"id": "b", "text": "B"})(),
+                            type("C", (), {"id": "a", "text": "A"})(),
+                        ],
+                    },
+                )()
+            ],
+        },
+    )()
+    resp = engine._decide(req)
+    assert [s.id for s in resp.results[0].scores] == ["b", "a"]
+    # Same logical request with different input order must produce identical scores
+    req2 = type(
+        "R",
+        (),
+        {
+            "state": "s",
+            "settings": req.settings,
+            "questions": [
+                type(
+                    "Q",
+                    (),
+                    {
+                        "id": "q",
+                        "type": "choice",
+                        "question": "?",
+                        "candidates": [
+                            type("C", (), {"id": "a", "text": "A"})(),
+                            type("C", (), {"id": "b", "text": "B"})(),
+                        ],
+                    },
+                )()
+            ],
+        },
+    )()
+    resp2 = engine._decide(req2)
+    assert [s.id for s in resp2.results[0].scores] == ["a", "b"]
+    by_id = {s.id: s for s in resp.results[0].scores}
+    for s2 in resp2.results[0].scores:
+        s1 = by_id[s2.id]
+        assert abs(s1.score - s2.score) < 1e-6

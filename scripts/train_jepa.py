@@ -263,6 +263,9 @@ def main() -> int:
         cov_weight=float(jepa_cfg.get("cov_weight", 0.04)),
         var_target_std=float(jepa_cfg.get("var_target_std", 1.0)),
         regularize_context=bool(jepa_cfg.get("regularize_context", False)),
+        regularize_target=bool(jepa_cfg.get("regularize_target", True)),
+        target_var_weight=float(jepa_cfg.get("target_var_weight", 1.0)),
+        target_cov_weight=float(jepa_cfg.get("target_cov_weight", 0.04)),
         anchor_weight=float(jepa_cfg.get("anchor_weight", 0.0)),
         train_last_k_layers=(
             None
@@ -353,6 +356,9 @@ def main() -> int:
                     "lr": scheduler.get_last_lr()[0],
                     "elapsed_sec": round(time.time() - started, 1),
                 }
+                if "var_target" in out:
+                    record["var_target"] = float(out["var_target"].detach())
+                    record["cov_target"] = float(out["cov_target"].detach())
                 with open(metrics_path, "a") as f:
                     f.write(json.dumps(record) + "\n")
                 print(
