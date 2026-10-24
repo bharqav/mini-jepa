@@ -68,6 +68,9 @@ class JEPAConfig:
     cov_weight: float = 0.04  # VICReg covariance weight
     var_target_std: float = 1.0  # hinge: per-dim std should reach this
     regularize_context: bool = False  # apply VICReg terms to context reps too
+    regularize_target: bool = True  # apply VICReg terms to target reps (collapse prevention)
+    target_var_weight: float = 1.0  # target-side variance hinge weight
+    target_cov_weight: float = 0.04  # target-side covariance weight
     anchor_weight: float = 0.0  # distill context reps toward the frozen target
     train_last_k_layers: int | None = None  # freeze all but the top-k context blocks
     bidirectional_context: bool = False  # experimental non-canonical option
@@ -447,6 +450,13 @@ def jepa_loss(
         loss = loss + cfg.var_weight * var_ctx + cfg.cov_weight * cov_ctx
         parts["var_context"] = var_ctx.detach()
         parts["cov_context"] = cov_ctx.detach()
+    if cfg.regularize_target:
+        t = target[mask]
+        var_tgt = variance_hinge(t, cfg.var_target_std)
+        cov_tgt = covariance_penalty(t)
+        loss = loss + cfg.target_var_weight * var_tgt + cfg.target_cov_weight * cov_tgt
+        parts["var_target"] = var_tgt.detach()
+        parts["cov_target"] = cov_tgt.detach()
     if cfg.anchor_weight > 0 and context is not None:
         anchor = F.mse_loss(context[mask], target[mask])
         loss = loss + cfg.anchor_weight * anchor
