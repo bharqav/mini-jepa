@@ -47,6 +47,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Python 3.11/3.12/3.13 matrix, `mypy` on the production surface, a coverage
   gate, and a container build.
 
+- **Real Qwen JEPA pipeline.** `scripts/train_jepa.py` pretrains the
+  JEPA-style latent predictor on packed decision text with the pinned
+  Qwen3-0.6B backbone; `src/jev_qwen/jepa_data.py` provides deterministic
+  packing/batching. Checkpoints store the context encoder as a raw
+  `Qwen3Model` state dict. `scripts/train.py --init-from-jepa` loads it into a
+  frozen decision backbone for an apples-to-apples probe. Added causal/frozen
+  target configs, a bidirectional probe config, tests, and
+  `results/jepa_qwen_results.json`. Measured single-seed result is negative:
+  JEPA init 0.4975 vs pretrained baseline 0.5745 accuracy; reported honestly.
+
 ### Security
 
 - **Safetensors-only checkpoint loading.** `save_checkpoint` now writes
@@ -126,6 +136,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Qwen JEPA dtype, RNG and target-path bugs.** The CPU masking generator is
+  used regardless of device; attention-bias dtype follows the embedding/autocast
+  dtype; and context/target embed independently so the target encoder cannot
+  share the context's embedding computation.
 - **Stale dataset config names in the smoke and ablation configs.** The
   pinned dataset revision names the on-disk `data/` config `default`, and
   `datasets` 5.x no longer accepts `data` as a config name. The smoke and

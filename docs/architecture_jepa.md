@@ -55,3 +55,51 @@
 `jepa_loss`/`mse` (latent) vs `lm_loss` (causal next-token CE) plus collapse
 diagnostics to `runs/jepa_smoke/metrics.json`. A drop in MSE is only accepted
 as learning if `collapse_ratio == 0` and `mean_std` stays healthy.
+
+## 6. Real Qwen3-0.6B pretraining pipeline (implemented)
+
+The toy smoke path above is complemented by a real-weight pipeline:
+
+| Component | Location |
+|---|---|
+| Packed text dataset | `src/jev_qwen/jepa_data.py` (`record_text`, `pack_sequences`, `build_packed_dataset`, `make_batches`) |
+| Pretraining/eval CLI | `scripts/train_jepa.py` |
+| Causal EMA config | `configs/jepa_qwen.yaml` |
+| Frozen-target config | `configs/jepa_qwen_frozen.yaml` |
+| Frozen decision probe | `configs/jepa_probe.yaml`, `configs/jepa_probe_bidir.yaml` |
+| Backbone init from JEPA | `src/jev_qwen/train.py:init_backbone_from_jepa`, `scripts/train.py --init-from-jepa` |
+
+**Data path.** `record_text` concatenates state, instructions and candidate
+text but deliberately drops the label. Streams are tokenized, shuffled with a
+seeded RNG, and packed into fixed-length rows separated by EOS, so the JEPA
+masking path never mistakes padding for content.
+
+**Objective.** The context encoder sees block-masked embeddings; the target
+encoder sees the unmasked sequence under `no_grad`. Targets are the first-N
+Qwen decoder blocks' last hidden states. The default target is an EMA copy of
+the context encoder (`ema_momentum: 0.996`). `freeze_target: true` instead
+keeps the pretrained Qwen target fixed, which avoids target drift at the cost
+of a harder, fixed prediction problem. `bidirectional_context: true` uses full
+attention in both encoders; the default remains causal.
+
+**Checkpoint.** `save_jepa` writes `context.safetensors`, `predictor.safetensors`,
+`mask_vector.safetensors` and `meta.json`. The context state dict is the raw
+truncated `Qwen3Model` state dict, so it can initialise the decision backbone
+without conversion.
+
+**Probe.** `scripts/train.py --init-from-jepa <run>/jepa/context.safetensors`
+loads the context weights into a frozen decision backbone, then trains only the
+decision head. The uninitialised baseline uses the same config without
+`--init-from-jepa`. A `bidirectional: true` probe config is provided so a
+bidirectional JEPA encoder can be evaluated with matching full attention.
+
+**Measured result (single seed, RTX 5060, 8 layers, 2,000 steps).** The
+pretrained-Qwen causal frozen probe reaches 0.5745 accuracy; the causal EMA
+JEPA probe reaches 0.3940; the causal frozen-target JEPA probe reaches 0.4975.
+With matching bidirectional attention, the pretrained baseline is 0.5390 and
+the bidirectional JEPA probe is 0.4185. Latent eval MSE is 12.33 for causal
+EMA, 12.38 for causal frozen-target, and 6.42 for bidirectional, but JEPA
+initialisation does **not** improve this downstream decision probe in either
+attention mode. This is a negative result for the current protocol, not
+evidence that JEPA is better. Full metrics:
+`results/jepa_qwen_results.json`.

@@ -334,6 +334,26 @@ make smoke        # overfits 10 questions; loss should drop sharply
 make jepa         # JEPA latent-prediction smoke experiment
 ```
 
+### Real Qwen JEPA pretraining
+
+The real-weight path uses the pinned Qwen3-0.6B checkpoint and packed decision
+text:
+
+```bash
+python scripts/train_jepa.py configs/jepa_qwen.yaml --name jepa-qwen
+python scripts/train.py configs/jepa_probe.yaml --name probe-base
+python scripts/train.py configs/jepa_probe.yaml --name probe-jepa \
+  --init-from-jepa runs/jepa-qwen-<timestamp>/jepa/context.safetensors
+```
+
+`configs/jepa_qwen_frozen.yaml` keeps the pretrained target encoder fixed;
+`configs/jepa_probe_bidir.yaml` evaluates a bidirectional JEPA encoder with
+matching full attention. The measured single-seed result is a **negative
+result**: the JEPA-initialised frozen probe scores 0.4975 accuracy vs 0.5745
+for pretrained Qwen (causal EMA variant: 0.3940). See
+`results/jepa_qwen_results.json` and
+[docs/experiments.md](docs/experiments.md) before quoting a JEPA win.
+
 ### Serve
 
 ```bash
@@ -603,7 +623,7 @@ make test-real   # full suite with real Qwen3-0.6B (~1.2 GB, cached afterwards)
 **Implemented**, everything in the features table above.
 
 **Planned**
-- Downstream probe evaluation for the JEPA representations
+- Multi-seed JEPA probe sweep and a decision-aware auxiliary objective
 - Quantised CPU inference path for edge deployment
 
 **Not planned**

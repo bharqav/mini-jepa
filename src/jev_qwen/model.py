@@ -117,10 +117,17 @@ class CompatHead(nn.Module):
 
 
 class DecisionNetwork(nn.Module):
-    def __init__(self, backbone, head, gradient_checkpointing: bool = False):
+    def __init__(
+        self,
+        backbone,
+        head,
+        gradient_checkpointing: bool = False,
+        bidirectional: bool = False,
+    ):
         super().__init__()
         self.backbone = backbone
         self.head = head
+        self.bidirectional = bidirectional
         if gradient_checkpointing and hasattr(backbone, "gradient_checkpointing_enable"):
             backbone.gradient_checkpointing_enable()
             self.head.gradient_checkpointing = True
@@ -134,8 +141,22 @@ class DecisionNetwork(nn.Module):
         choice_mask,
         answer_end_idx,
         task_type,
+        token_mask=None,
         **kwargs,
     ):
+        if self.bidirectional:
+            dtype = next(self.backbone.parameters()).dtype
+            if token_mask is not None:
+                visible = token_mask[:, None, None, :].to(dtype)
+                attention_mask = ((1.0 - visible) * torch.finfo(dtype).min).expand(
+                    -1, 1, token_mask.shape[1], -1
+                )
+            elif attention_mask.dim() == 2:
+                seq_len = attention_mask.shape[1]
+                visible = attention_mask[:, None, None, :].to(dtype)
+                attention_mask = ((1.0 - visible) * torch.finfo(dtype).min).expand(
+                    -1, 1, seq_len, -1
+                )
         out = self.backbone(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -189,6 +210,7 @@ def build_network(
     head_config,
     gradient_checkpointing: bool = False,
     revision: str | None = None,
+    bidirectional: bool = False,
 ):
     from peft import LoraConfig, get_peft_model
 
@@ -211,4 +233,5 @@ def build_network(
         backbone,
         build_head(head_config, backbone.config.hidden_size),
         gradient_checkpointing=gradient_checkpointing,
+        bidirectional=bidirectional,
     )

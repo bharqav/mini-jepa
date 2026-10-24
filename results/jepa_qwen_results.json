@@ -1,0 +1,109 @@
+{
+  "protocol": {
+    "backbone": "Qwen/Qwen3-0.6B",
+    "backbone_revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+    "layers": 8,
+    "dataset": "avbiswas/bev-decision-150K",
+    "dataset_revision": "11ed9b5b879e7f9524e7c89c1037d498c54206f0",
+    "pretrain_sequences": 8000,
+    "sequence_length": 256,
+    "pretrain_steps": 2000,
+    "batch_size": 8,
+    "probe_train_questions": 20000,
+    "probe_test_questions": 2000,
+    "probe_evaluated_rows": 392,
+    "probe_epochs": 1,
+    "probe_lora_layers": 0,
+    "device": "WSL2, RTX 5060 Laptop 8 GB, bf16",
+    "caveat": "One seed per configuration. Probe test rows are the same across runs, but these are single-seed comparisons, not a seed sweep."
+  },
+  "pretraining": {
+    "causal_ema_target": {
+      "run": "runs/jepa-qwen-causal-20261023-153549",
+      "eval_mse": 12.328413240057838,
+      "eval_cosine": 0.5705403212153245,
+      "eval_linear_cka": 0.5778024891121487,
+      "eval_mean_std": 0.30944001364015267,
+      "eval_collapse_ratio": 0.0
+    },
+    "bidirectional_ema_target": {
+      "run": "runs/jepa-qwen-bidir-20261023-162222",
+      "eval_mse": 6.421545996864352,
+      "eval_cosine": 0.6641468627295501,
+      "eval_linear_cka": 0.43746631464986413,
+      "eval_mean_std": 0.2025731277068171,
+      "eval_collapse_ratio": 3.0894122130559544e-05
+    },
+    "causal_frozen_target": {
+      "run": "runs/jepa-qwen-frozen-20261023-165100",
+      "eval_mse": 12.379571769637733,
+      "eval_cosine": 0.5955584887281552,
+      "eval_linear_cka": 0.39335249017715623,
+      "eval_mean_std": 0.15468329999868463,
+      "eval_collapse_ratio": 0.0
+    }
+  },
+  "frozen_backbone_probe": {
+    "baseline_pretrained_qwen": {
+      "run": "runs/jepa-probe-base-20261023-160609",
+      "accuracy": 0.5745,
+      "nll": 0.9461,
+      "brier": 0.5340,
+      "ece": 0.0427,
+      "accuracy_noul": 0.6820,
+      "accuracy_choice": 0.5266,
+      "accuracy_score": 0.3815,
+      "macro_f1": 0.6169,
+      "auc_noul": 0.7336
+    },
+    "causal_ema_jepa": {
+      "run": "runs/jepa-probe-causal-20261023-161357",
+      "accuracy": 0.3940,
+      "nll": 1.1524,
+      "brier": 0.6392,
+      "ece": 0.0256,
+      "accuracy_noul": 0.6113,
+      "accuracy_choice": 0.2251,
+      "accuracy_score": 0.2651,
+      "macro_f1": 0.3950,
+      "auc_noul": 0.6471
+    },
+    "causal_frozen_target_jepa": {
+      "run": "runs/jepa-probe-frozen-20261023-170604",
+      "accuracy": 0.4975,
+      "nll": 1.0563,
+      "brier": 0.5901,
+      "ece": 0.0308,
+      "accuracy_noul": 0.6254,
+      "accuracy_choice": 0.4246,
+      "accuracy_score": 0.3253,
+      "macro_f1": 0.5118,
+      "auc_noul": 0.6982
+    },
+    "bidirectional_pretrained_qwen": {
+      "run": "runs/jepa-probe-bidir-base3-20261024-023609",
+      "accuracy": 0.5390,
+      "nll": 1.0178,
+      "brier": 0.5669,
+      "ece": 0.0455,
+      "accuracy_noul": 0.6843,
+      "accuracy_choice": 0.4512,
+      "accuracy_score": 0.3614,
+      "macro_f1": 0.5802,
+      "auc_noul": 0.7410
+    },
+    "bidirectional_ema_jepa": {
+      "run": "runs/jepa-probe-bidir-jepa-20261024-024554",
+      "accuracy": 0.4185,
+      "nll": 1.1491,
+      "brier": 0.6368,
+      "ece": 0.0345,
+      "accuracy_noul": 0.6372,
+      "accuracy_choice": 0.2539,
+      "accuracy_score": 0.2691,
+      "macro_f1": 0.3544,
+      "auc_noul": 0.6529
+    }
+  },
+  "verdict": "The JEPA-initialised frozen backbones do not beat the pretrained Qwen baseline on the decision probe in this single-seed protocol, with or without matching bidirectional attention. The causal frozen-target variant is closest but still 7.7 accuracy points below the causal baseline; the bidirectional JEPA is 12.1 points below the bidirectional baseline. Report this as a negative result, not as evidence that JEPA is better."
+}

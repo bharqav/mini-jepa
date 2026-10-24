@@ -3,6 +3,9 @@
 All tests run on CPU with the tiny random backbone — no Qwen download needed.
 """
 
+import os
+
+import pytest
 import torch
 
 from jev_qwen.jepa import (
@@ -72,6 +75,18 @@ def test_predictor_cannot_trivially_copy():
     assert float(out["mse"]) > 1e-6, "untrained predictor must not already match targets"
 
 
+def test_frozen_target_is_not_updated():
+    st, _ = make_state(freeze_target=True)
+    with torch.no_grad():
+        for p in st.context.parameters():
+            p.fill_(1.0)
+        for p in st.target.parameters():
+            p.fill_(0.0)
+    st.ema_update(momentum=0.0)
+    for p in st.target.parameters():
+        assert torch.allclose(p, torch.zeros_like(p))
+
+
 def test_ema_update_exact():
     st, cfg = make_state()
     with torch.no_grad():
@@ -121,3 +136,26 @@ def test_forward_shapes_and_mask_only_loss():
     assert out["pred"].shape == out["target"].shape == (2, 16, 32)
     assert out["target_mask"].shape == (2, 16)
     assert out["loss"].isfinite()
+
+
+def test_qwen_forward_backward_smoke():
+    if os.environ.get("JEV_REAL_WEIGHTS") != "1":
+        pytest.skip("set JEV_REAL_WEIGHTS=1 to exercise the Qwen JEPA path")
+    from jev_qwen.model import load_backbone
+
+    backbone = load_backbone("Qwen/Qwen3-0.6B", 1)
+    cfg = JEPAConfig(
+        hidden_dim=1024,
+        num_layers=1,
+        predictor_dim=32,
+        predictor_layers=1,
+        mask_ratio=0.25,
+        mask_span=2,
+        seed=0,
+    )
+    state = JEPAState(cfg, qwen_model=backbone)
+    ids = torch.randint(0, 1000, (1, 16))
+    out = state(ids)
+    assert torch.isfinite(out["loss"])
+    out["loss"].backward()
+    assert any(p.grad is not None for p in state.context.parameters())

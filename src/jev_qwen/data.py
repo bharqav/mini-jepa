@@ -413,6 +413,7 @@ def collate_fn(batch, pad_id: int = 0):
         "input_ids": input_ids,
         "position_ids": position_ids,
         "attention_mask": attention_mask,
+        "token_mask": input_ids != pad_id,
         "choice_read_idx": choice_read_idx,
         "choice_mask": choice_mask,
         "answer_end_idx": answer_end_idx,

@@ -28,6 +28,48 @@ from .utils import autocast, get_device, seed_all, to_device
 TASK_NAMES = {v: k for k, v in TASK_TYPES.items()}
 
 
+def init_backbone_from_jepa(network, source) -> None:
+    """Load a JEPA context encoder into a frozen decision backbone.
+
+    The JEPA checkpoint stores the raw ``Qwen3Model`` state dict. LoRA-wrapped
+    backbones expose the base model under ``base_model.model``; loading there
+    keeps the adapter initialisation (if any) untouched.
+    """
+    from safetensors.torch import load_file
+
+    path = Path(source)
+    if path.is_dir():
+        path = path / "context.safetensors"
+    state = load_file(str(path))
+    target = network.backbone
+    if hasattr(target, "base_model"):
+        target = getattr(target.base_model, "model", target.base_model)
+    target_names = set(target.state_dict())
+    mapped = {}
+    for key, value in state.items():
+        if key in target_names:
+            mapped[key] = value
+            continue
+        if key.endswith(".weight"):
+            candidate = key[: -len(".weight")] + ".base_layer.weight"
+            if candidate in target_names:
+                mapped[candidate] = value
+    missing, unexpected = target.load_state_dict(mapped, strict=False)
+    lora_missing = [key for key in missing if ".lora_" in key]
+    missing = [key for key in missing if ".lora_" not in key]
+    print(
+        f"initialised backbone from JEPA {path} "
+        f"(missing={len(missing)}, unexpected={len(unexpected)})",
+        flush=True,
+    )
+    if lora_missing:
+        print(f"  randomly initialised LoRA adapters: {len(lora_missing)}", flush=True)
+    if missing:
+        print(f"  missing keys: {missing[:5]}", flush=True)
+    if unexpected:
+        print(f"  unexpected keys: {unexpected[:5]}", flush=True)
+
+
 def make_loader(questions, config: dict[str, Any], tokenizer, shuffle: bool, seed: int = 0):
     data = config["data"]
     ds = DecisionDataset(
@@ -144,7 +186,10 @@ def train(config: dict[str, Any], run_name: str, resume: str | None = None) -> P
         config["head"],
         gradient_checkpointing=model.get("gradient_checkpointing", False),
         revision=model.get("revision"),
+        bidirectional=bool(model.get("bidirectional", False)),
     )
+    if model.get("init_from_jepa") and not resume:
+        init_backbone_from_jepa(network, model["init_from_jepa"])
     if resume:
         net_tmp, _ = load_checkpoint(rdir, torch.device("cpu"))
         network.head.load_state_dict(net_tmp.head.state_dict())

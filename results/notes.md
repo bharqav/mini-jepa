@@ -188,5 +188,36 @@ accuracies are 0.6065, 0.6935 and 0.7015.
   half in the CPU ablation while NLL improved; small-n noise, reported as-is.
 
 ## Not yet measured
-A 5-epoch seed sweep, wider LoRA, pooled-span or mid-layer JEPA targets,
-packed multi-question execution, external teacher endpoint.
+A 5-epoch seed sweep, a multi-seed JEPA probe sweep, wider LoRA, pooled-span or
+mid-layer JEPA targets, packed multi-question execution, external teacher
+endpoint.
+
+## Episode 7 — Real Qwen3-0.6B JEPA + frozen probe (single seed)
+
+Qwen3-0.6B (pinned revision), first 8 layers, packed decision text
+(8,000 rows x 256 tokens), 2,000 JEPA steps, batch 8, bf16, RTX 5060 via WSL2.
+Probe: frozen backbone, one epoch, 20,000 train questions, 392 evaluated test
+rows (same rows for every system).
+
+| system | pretrain MSE | pretrain cosine | probe acc | NLL | ECE | choice | noul | AUC |
+|---|---|---|---|---|---|---|---|---|
+| pretrained Qwen, causal | — | — | **0.5745** | **0.9461** | 0.0427 | **0.5266** | **0.6820** | **0.7336** |
+| causal EMA JEPA | 12.33 | 0.571 | 0.3940 | 1.1524 | 0.0256 | 0.2251 | 0.6113 | 0.6471 |
+| causal frozen-target JEPA | 12.38 | 0.596 | 0.4975 | 1.0563 | 0.0308 | 0.4246 | 0.6254 | 0.6982 |
+| pretrained Qwen, bidirectional | — | — | 0.5390 | 1.0178 | 0.0455 | 0.4512 | 0.6843 | 0.7410 |
+| bidirectional EMA JEPA | **6.42** | **0.664** | 0.4185 | 1.1491 | 0.0345 | 0.2539 | 0.6372 | 0.6529 |
+
+The bidirectional rows use `configs/jepa_probe_bidir.yaml`, so the probe's
+attention matches the JEPA encoder. Bidirectional JEPA has the best latent
+MSE/cosine but is 12.1 accuracy points below the bidirectional pretrained
+baseline (0.4185 vs 0.5390). The causal frozen-target variant is 7.7 points
+behind its baseline (0.4975 vs 0.5745).
+
+**Verdict:** JEPA initialisation did not improve the frozen decision probe in
+this protocol, in either attention mode. Lower latent MSE alone is not evidence
+of a better decision representation. Single seed; treat as a negative result,
+not a ranking. A multi-seed sweep and a decision-aware auxiliary objective are
+the next steps.
+
+Artifacts: `results/jepa_qwen_results.json`; raw runs are in the git-ignored
+`runs/` directory.
