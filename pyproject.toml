@@ -83,6 +83,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 # No `-q` here: CI and the Makefile pass their own verbosity, and combining
 # flags suppresses pytest's summary line (which quality gates parse).
 filterwarnings = ["ignore::DeprecationWarning"]
