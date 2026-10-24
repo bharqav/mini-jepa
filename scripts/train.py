@@ -10,7 +10,7 @@ sys.path.insert(0, "src")
 from jev_qwen.train import train
 
 
-def main() -> None:
+def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("config")
     ap.add_argument("--name", default=None)
@@ -26,6 +26,7 @@ def main() -> None:
     if args.init_from_jepa:
         cfg.setdefault("model", {})["init_from_jepa"] = args.init_from_jepa
     train(cfg, args.name or Path(args.config).stem, args.resume)
+    return 0
 
 
 if __name__ == "__main__":

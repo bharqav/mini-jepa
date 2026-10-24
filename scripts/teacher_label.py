@@ -25,7 +25,7 @@ ap.add_argument("--cache", default="data/processed/teacher_cache.jsonl")
 args = ap.parse_args()
 
 
-def main() -> None:
+def main() -> int:
     records = [json.loads(l) for l in Path(args.inp).read_text().splitlines() if l.strip()]
     todo = [r for r in records if r.get("label") is None][: args.limit] or records[: args.limit]
     teacher = (
@@ -47,6 +47,7 @@ def main() -> None:
                 indent=2,
             )
         )
+    return 0
 
 
 if __name__ == "__main__":

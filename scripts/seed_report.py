@@ -38,7 +38,7 @@ ap.add_argument("--out", default="results/seed_report.json")
 args = ap.parse_args()
 
 
-def main() -> None:
+def main() -> int:
     report = {"systems": {}}
     for label, pattern in zip(args.label, args.glob):
         files = sorted(glob.glob(pattern))
@@ -88,6 +88,7 @@ def main() -> None:
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(report, indent=2))
     print(json.dumps(report, indent=2)[:2000])
+    return 0
 
 
 if __name__ == "__main__":

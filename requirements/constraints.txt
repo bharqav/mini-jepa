@@ -85,3 +85,6 @@ tzdata==2026.5 ; sys_platform == 'emscripten' or sys_platform == 'win32'
 uvicorn==0.54.0
 xxhash==4.0.2
 yarl==1.25.1
+pillow==13.0.0
+pypdf==6.21.2
+uv==0.13.4

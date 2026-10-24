@@ -16,7 +16,7 @@ from jev_qwen.train import get_questions, make_loader
 from jev_qwen.utils import get_device
 
 
-def main() -> None:
+def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("checkpoint")
     ap.add_argument("--split", default="test")
@@ -138,6 +138,7 @@ def main() -> None:
         print("\nby candidate count:")
         for d, s in dom["by_candidate_count"].items():
             print(f"  {s['accuracy']:.3f} [{s['lo']:.3f}, {s['hi']:.3f}]  n={s['n']:<5} C={d}")
+    return 0
 
 
 if __name__ == "__main__":

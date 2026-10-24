@@ -14,7 +14,7 @@ from jev_qwen.infer import DecisionEngine
 from jev_qwen.schema import DecisionRequest
 
 
-def main() -> None:
+def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", default=None)
     ap.add_argument("--state", default=None)
@@ -40,6 +40,7 @@ def main() -> None:
             ],
         }
     print(json.dumps(engine.decide(DecisionRequest(**payload)).model_dump(), indent=2))
+    return 0
 
 
 if __name__ == "__main__":

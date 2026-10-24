@@ -11,7 +11,7 @@ ap.add_argument("--out", required=True)
 args = ap.parse_args()
 
 
-def main() -> None:
+def main() -> int:
     out = Path(args.out)
     shutil.copytree(args.checkpoint, out, dirs_exist_ok=True)
     meta = json.loads((out / "meta.json").read_text())
@@ -21,6 +21,7 @@ def main() -> None:
     )
     (out / "meta.json").write_text(json.dumps(meta, indent=2))
     print(f"exported -> {out}")
+    return 0
 
 
 if __name__ == "__main__":
