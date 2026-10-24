@@ -60,10 +60,51 @@ of the eval rows and measured on the other half (T = 1.014, NLL 0.933 → 0.922,
 ECE → 0.032). Reliability and risk-coverage SVGs are emitted per checkpoint.
 Selective prediction works: 0.688 accuracy at 50% coverage vs 0.572 overall.
 
-## Efficiency (same GPU)
-21 ms median single-question latency, 369 q/s at batch 16, 3.3 GB peak
-training VRAM, 1.3 GB inference VRAM, zero tokens generated. Same-seed
-reruns are bit-identical; different seeds are not (the 3-epoch compat
+## Efficiency (same GPU, verified idle)
+
+Two hardware contexts are reported separately because the numbers differ by an
+order of magnitude. Raw artifacts: `results/benchmark_gpu.json` and
+`results/benchmark_cpu.json`.
+
+```mermaid
+flowchart LR
+    A[Same 12-layer CompatHead\n10 repeats, warmup excluded] --> B[RTX 5060 WSL2\nCUDA-synchronised\nidle GPU]
+    A --> C[Windows CPU\nperf_counter\nno device sync]
+    B --> D[batch-1 med 28.0 ms\nbatch-4 med 37.9 ms\nbatch-8 med 29.1 ms\n275 q/s peak]
+    C --> E[batch-1 med 91.3 ms\nbatch-4 med 236.1 ms\nbatch-8 med 464.6 ms\n17.2 q/s plateau]
+```
+
+**RTX 5060 Laptop (8.1 GB) via WSL2, CUDA 12.8, idle GPU, 10 repeats:**
+
+| Metric | Value |
+|--------|-------|
+| Model load | 12.98 s |
+| First request | 1.04 s |
+| Batch 1 median / p95 | 28.0 ms / 41.0 ms |
+| Batch 1 throughput | 35.7 questions/s |
+| Batch 4 median / p95 | 37.9 ms / 59.1 ms |
+| Batch 4 throughput | 105.5 questions/s |
+| Batch 8 median / p95 | 29.1 ms / 31.9 ms |
+| Batch 8 throughput | 275.0 questions/s |
+| Peak inference VRAM | 1,348.9 MB |
+| Reserved VRAM | 1,366.0 MB |
+| Tokens generated per decision | **0** |
+
+**Windows CPU (default Python venv), 10 repeats:**
+
+| Metric | Value |
+|--------|-------|
+| Model load | 23.04 s |
+| First request | 131.1 ms |
+| Batch 1 median / p95 | 91.3 ms / 107.9 ms |
+| Batch 1 throughput | 11.0 questions/s |
+| Batch 4 median / p95 | 236.1 ms / 291.2 ms |
+| Batch 4 throughput | 16.9 questions/s |
+| Batch 8 median / p95 | 464.6 ms / 551.9 ms |
+| Batch 8 throughput | 17.2 questions/s |
+| Tokens generated per decision | **0** |
+
+Same-seed reruns are bit-identical; different seeds are not (the 3-epoch compat
 accuracy spans 0.6065-0.7015).
 
 ## What would come next
@@ -103,3 +144,88 @@ required before claiming a JEPA win.
 
 Measured values: `results/jepa_qwen_results.json`. Raw runs (git-ignored):
 `runs/jepa-qwen-*`, `runs/jepa-probe-*`.
+
+## Episode 8 - Standard downstream probes (SST-2, STS-B, single seed)
+
+`scripts/evaluate_jepa.py` evaluates frozen representations with a linear ridge
+probe and cosine kNN, without task fine-tuning. Protocol: GLUE `sst2` and
+`stsb`, 20,000 train / 1,000 eval examples, mean pooling, ridge alpha 1.0,
+kNN k=20. Baselines: the same Qwen3-0.6B backbone without JEPA, random-init
+Qwen, BERT-base MLM, and SimCSE-BERT-base. Causal JEPA is the frozen-target
+checkpoint; bidirectional JEPA uses the matching bidirectional probe.
+
+| task | representation | linear | kNN | R@1 | effective rank |
+|---|---|---|---|---|---|
+| SST-2 | causal JEPA | 0.828 | 0.752 | - | 165 |
+| SST-2 | frozen Qwen | 0.847 | 0.804 | - | 236 |
+| SST-2 | random Qwen | 0.575 | 0.588 | - | 157 |
+| SST-2 | BERT MLM | **0.856** | 0.812 | - | 150 |
+| SST-2 | SimCSE | 0.844 | **0.847** | - | 130 |
+| STS-B | causal JEPA | 0.462 | 0.489 | 0.267 | 369 |
+| STS-B | frozen Qwen | 0.479 | 0.557 | 0.309 | 450 |
+| STS-B | random Qwen | 0.149 | 0.166 | 0.094 | 182 |
+| STS-B | BERT MLM | 0.550 | 0.627 | 0.286 | 321 |
+| STS-B | SimCSE | **0.747** | **0.828** | **0.405** | 341 |
+| SST-2 | bidirectional JEPA | 0.698 | 0.524 | - | **2.5** |
+| SST-2 | bidirectional frozen Qwen | **0.815** | **0.734** | - | 241 |
+| STS-B | bidirectional JEPA | 0.064 | 0.128 | 0.019 | **6.4** |
+| STS-B | bidirectional frozen Qwen | **0.454** | **0.450** | **0.247** | 544 |
+
+SST-2 cells are accuracy; STS-B cells are Spearman correlation. All probes
+recover strong signal from frozen Qwen and SimCSE, so the harness is not
+degenerate. Causal JEPA remains below frozen Qwen on both tasks and trails
+SimCSE by a wide margin on STS-B. The effective-rank diagnostic exposes what
+the previous mean-std/collapse-ratio check missed: causal JEPA loses
+dimensionality (165 vs 236 on SST-2, 369 vs 450 on STS-B), and bidirectional
+JEPA has severe dimensional collapse (rank 2.5 and 6.4) despite a non-zero
+per-dimension std. Its latent MSE (6.42) was therefore misleading.
+
+**Verdict: still negative.** JEPA pretraining does not improve these standard
+frozen probes. The next experiment should attack representation collapse
+(target-side VICReg or a stronger EMA/stop-grad schedule), then rerun the same
+probes across seeds before any positive claim. The probe is two-task and
+single-seed; it is stronger evidence than the decision-only probe, not a full
+JEPA benchmark.
+
+Measured values: `results/jepa_probe_results.json`,
+`results/jepa_probe_bidir_results.json`.
+
+## Episode 9 - Context-VICReg collapse fix (negative)
+
+The first attempted fix for Episode 8 added the same VICReg variance and
+covariance terms to the masked context representations, not just the
+predictor (`configs/jepa_qwen_context_vicreg.yaml`, 2,000 steps, seed 0). This
+raised token-level context rank (313) but the EMA target and predictor stayed
+collapsed (rank 5.8 and 3.6), and mean-pooled sentence representations were
+worse than the original JEPA: SST-2 linear 0.697 / kNN 0.530, STS-B Spearman
+0.116 / 0.135, R@1 0.028, sentence effective rank 7.9 / 34.5 (frozen Qwen:
+0.847 / 0.804, 0.479 / 0.557, 0.309, rank 236 / 450).
+
+**Verdict: negative.** Regularising masked context tokens does not preserve the
+rank of the pooled sentence representation, and the EMA target still collapses.
+The next attempt should regularise or whiten the target/pooled representation
+itself (or use a projection head), not the context tokens. Artifacts:
+`results/jepa_probe_ctx_vicreg.json`.
+
+## Episode 10 - Anchored JEPA and top-block-only adaptation
+
+Two drift controls were tested against the collapse in Episode 8. Both use a
+frozen pretrained target (no EMA target) and the same 2,000-step protocol.
+
+| variant | context trainable | anchor | SST-2 linear / kNN | STS-B linear / kNN | STS-B R@1 | sentence rank |
+|---|---|---|---|---|---|---|
+| frozen target, unanchored | all | 0.0 | 0.828 / 0.752 | 0.462 / 0.489 | 0.267 | 165 / 369 |
+| anchored | all | 1.0 | 0.823 / 0.773 | 0.460 / **0.589** | 0.279 | 169 / 370 |
+| anchored, top-2 blocks | last 2 | 0.1 | 0.807 / 0.752 | 0.431 / 0.518 | 0.227 | 97 / 293 |
+| frozen Qwen | none | - | **0.847 / 0.804** | **0.479 / 0.557** | **0.309** | 236 / 450 |
+
+The full-context anchor is the best JEPA variant measured on STS-B kNN
+(0.589 vs 0.557 for frozen Qwen), but it still loses on SST-2 and on STS-B
+linear/retrieval, so this is not a win. Restricting adaptation to the top two
+blocks made both tasks worse. The anchor preserves more rank than the
+unanchored or context-VICReg variants but does not fully close the gap.
+
+**Verdict: no JEPA win yet.** The next useful experiment is a multi-seed anchor
+sweep (weight 0.1/0.5/1.0) with the same probes, plus a target/pooled
+whitening objective. Artifacts: `results/jepa_probe_anchor.json`,
+`results/jepa_probe_top2.json`.

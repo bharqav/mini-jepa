@@ -17,11 +17,20 @@ Type semantics (verified against `bev-train/dataset.py`, not invented):
   non-empty); label = index of `label` key.
 - **noul**: candidates = `["No", "Yes"]`; label = `int(label)`; output
   `P(Yes) = softmax(logits)[1]`.
-- **score**: candidates = enumerated `criteria` levels (`"i: level"`);
-  label = level index; output = expected level + normalized score
+- **score**: candidates = enumerated `criteria` levels (`"i: level"`); label
+  = level index; output = expected level + normalized score
   `E[level] / (C-1) ∈ [0, 1]`.
 
 ## Pipeline (`scripts/prepare_data.py`)
+
+```mermaid
+flowchart LR
+    A[Raw parquet\nHF dataset\npinned revision] --> B[Validate records\nmalformed / impossible\nlabel / dupes / conflicts]
+    B --> C[Dedup\nstate fingerprint\nexact dupes]
+    C --> D[Group split\ntrain / val / test\nno state leakage]
+    D --> E[JSONL output\ntrain + validation + test\ndata_quality_report.json]
+```
+
 Load → `validate_records` (malformed / impossible-label / exact-dupe /
 conflict detection) → `dedup_records` → `group_split` (grouped by state
 fingerprint BEFORE splitting, no leakage) → `{train,validation,test}.jsonl`

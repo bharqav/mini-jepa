@@ -61,11 +61,15 @@ class JEPAConfig:
     mask_ratio: float = 0.20  # fraction of state tokens masked as targets
     mask_span: int = 4  # contiguous span length (block masking)
     ema_momentum: float = 0.996  # target encoder EMA momentum
+    ema_momentum_end: float | None = None  # optional linear schedule endpoint
     loss_mse: float = 1.0
     loss_cosine: float = 0.0
     var_weight: float = 1.0  # VICReg variance hinge weight
     cov_weight: float = 0.04  # VICReg covariance weight
     var_target_std: float = 1.0  # hinge: per-dim std should reach this
+    regularize_context: bool = False  # apply VICReg terms to context reps too
+    anchor_weight: float = 0.0  # distill context reps toward the frozen target
+    train_last_k_layers: int | None = None  # freeze all but the top-k context blocks
     bidirectional_context: bool = False  # experimental non-canonical option
     freeze_target: bool = False  # keep the pretrained target encoder fixed
     seed: int = 0
@@ -318,12 +322,32 @@ class JEPAState(nn.Module):
             self.target = copy.deepcopy(self.context)
         self.target.requires_grad_(False)
         self.freeze_target = cfg.freeze_target
+        if cfg.train_last_k_layers is not None:
+            self._freeze_context_except_top_k(cfg.train_last_k_layers)
         dim = self.context.dim
         self.predictor = LatentPredictor(dim, cfg.predictor_dim, cfg.predictor_layers)
         self.ctx_mask_vector = nn.Parameter(torch.randn(dim) * 0.02)
         assert not shares_parameters(self.context, self.target), (
             "target encoder must own independent parameters"
         )
+
+    def _freeze_context_except_top_k(self, k: int) -> None:
+        """Keep pretrained low-level features fixed; adapt only the top blocks."""
+        if k < 1:
+            raise ValueError("train_last_k_layers must be >= 1")
+        for param in self.context.parameters():
+            param.requires_grad_(False)
+        if self.context.is_qwen:
+            blocks = list(self.context.model.layers)
+            norm = self.context.model.norm
+        else:
+            blocks = list(self.context.blocks)
+            norm = self.context.norm
+        for block in blocks[-k:]:
+            for param in block.parameters():
+                param.requires_grad_(True)
+        for param in norm.parameters():
+            param.requires_grad_(True)
 
     def embed_tokens(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.context.embed_tokens(input_ids)
@@ -365,7 +389,7 @@ class JEPAState(nn.Module):
             inputs_embeds=ctx_emb, position_ids=pos, bidirectional=self.cfg.bidirectional_context
         )
         pred_reps = self.predictor(ctx_reps, tmasks)
-        loss, parts = jepa_loss(pred_reps, tgt_reps.detach(), tmasks, self.cfg)
+        loss, parts = jepa_loss(pred_reps, tgt_reps.detach(), tmasks, self.cfg, ctx_reps)
         return {
             "loss": loss,
             **parts,
@@ -395,7 +419,11 @@ def shares_parameters(a: nn.Module, b: nn.Module) -> bool:
 
 
 def jepa_loss(
-    pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor, cfg: JEPAConfig
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    mask: torch.Tensor,
+    cfg: JEPAConfig,
+    context: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     p = pred[mask]  # [M, D]: loss is computed ONLY at target positions
     t = target[mask]
@@ -406,12 +434,24 @@ def jepa_loss(
     var = variance_hinge(p, cfg.var_target_std)
     cov = covariance_penalty(p)
     loss = cfg.loss_mse * mse + cfg.loss_cosine * cos + cfg.var_weight * var + cfg.cov_weight * cov
-    return loss, {
+    parts = {
         "mse": mse.detach(),
         "cosine": cos.detach(),
         "var_term": var.detach(),
         "cov_term": cov.detach(),
     }
+    if cfg.regularize_context and context is not None:
+        c = context[mask]
+        var_ctx = variance_hinge(c, cfg.var_target_std)
+        cov_ctx = covariance_penalty(c)
+        loss = loss + cfg.var_weight * var_ctx + cfg.cov_weight * cov_ctx
+        parts["var_context"] = var_ctx.detach()
+        parts["cov_context"] = cov_ctx.detach()
+    if cfg.anchor_weight > 0 and context is not None:
+        anchor = F.mse_loss(context[mask], target[mask])
+        loss = loss + cfg.anchor_weight * anchor
+        parts["anchor"] = anchor.detach()
+    return loss, parts
 
 
 def variance_hinge(x: torch.Tensor, target_std: float = 1.0, eps: float = 1e-4) -> torch.Tensor:
@@ -438,12 +478,16 @@ def collapse_diagnostics(reps: torch.Tensor, eps: float = 1e-3) -> dict[str, flo
         xc = reps.float() - reps.float().mean(dim=0, keepdim=True)
         cov = (xc.T @ xc) / max(reps.shape[0] - 1, 1)
         off = cov - torch.diag(torch.diag(cov))
+        eigvals = torch.linalg.eigvalsh(cov).clamp(min=0.0)
+        probs = eigvals / eigvals.sum().clamp(min=1e-12)
+        effective_rank = float(torch.exp(-(probs * torch.log(probs + 1e-12)).sum()))
         return {
             "mean_std": float(std.mean()),
             "min_std": float(std.min()),
             "collapse_ratio": float((std < eps).float().mean()),
             "cov_offdiag_norm": float((off**2).sum().sqrt()),
             "rep_norm": float(reps.float().norm(dim=-1).mean()),
+            "effective_rank": effective_rank,
         }
 
 

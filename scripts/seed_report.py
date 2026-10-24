@@ -37,52 +37,58 @@ ap.add_argument(
 ap.add_argument("--out", default="results/seed_report.json")
 args = ap.parse_args()
 
-report = {"systems": {}}
-for label, pattern in zip(args.label, args.glob):
-    files = sorted(glob.glob(pattern))
-    rows = []
-    for f in files:
-        d = json.loads(Path(f).read_text())
-        rows.append(
-            {
-                "exp": d.get("checkpoint", f),
-                "test": d["test"],
-                "best_test_accuracy": d.get("best_test_accuracy"),
-            }
+
+def main() -> None:
+    report = {"systems": {}}
+    for label, pattern in zip(args.label, args.glob):
+        files = sorted(glob.glob(pattern))
+        rows = []
+        for f in files:
+            d = json.loads(Path(f).read_text())
+            rows.append(
+                {
+                    "exp": d.get("checkpoint", f),
+                    "test": d["test"],
+                    "best_test_accuracy": d.get("best_test_accuracy"),
+                }
+            )
+        if not rows:
+            print(f"WARNING: no files matched {pattern}")
+            continue
+        accs = [r["test"]["accuracy"] for r in rows]
+        report["systems"][label] = {
+            "n_seeds": len(rows),
+            "accuracy": seed_summary(accs),
+            "nll": seed_summary([r["test"]["nll"] for r in rows]),
+            "choice": seed_summary([r["test"]["accuracy_choice"] for r in rows]),
+            "noul": seed_summary([r["test"]["accuracy_noul"] for r in rows]),
+            "score": seed_summary([r["test"]["accuracy_score"] for r in rows]),
+            "auc_noul": seed_summary([r["test"]["auc_noul"] for r in rows]),
+            "per_seed_accuracy": accs,
+            "runs": [r["exp"] for r in rows],
+        }
+
+    if len(args.label) >= 2 and len(report["systems"]) >= 2:
+        a, b = args.label[0], args.label[1]
+        report["comparison"] = compare_seeds(
+            report["systems"][a]["per_seed_accuracy"], report["systems"][b]["per_seed_accuracy"]
         )
-    if not rows:
-        print(f"WARNING: no files matched {pattern}")
-        continue
-    accs = [r["test"]["accuracy"] for r in rows]
-    report["systems"][label] = {
-        "n_seeds": len(rows),
-        "accuracy": seed_summary(accs),
-        "nll": seed_summary([r["test"]["nll"] for r in rows]),
-        "choice": seed_summary([r["test"]["accuracy_choice"] for r in rows]),
-        "noul": seed_summary([r["test"]["accuracy_noul"] for r in rows]),
-        "score": seed_summary([r["test"]["accuracy_score"] for r in rows]),
-        "auc_noul": seed_summary([r["test"]["auc_noul"] for r in rows]),
-        "per_seed_accuracy": accs,
-        "runs": [r["exp"] for r in rows],
-    }
 
-if len(args.label) >= 2 and len(report["systems"]) >= 2:
-    a, b = args.label[0], args.label[1]
-    report["comparison"] = compare_seeds(
-        report["systems"][a]["per_seed_accuracy"], report["systems"][b]["per_seed_accuracy"]
-    )
+    if args.paired:
+        from jev_qwen.stats import paired_delta_ci
 
-if args.paired:
-    from jev_qwen.stats import paired_delta_ci
+        A = json.loads(Path(args.paired[0]).read_text())["rows"]
+        B = json.loads(Path(args.paired[1]).read_text())["rows"]
+        assert len(A) == len(B), "paired bootstrap needs identical row counts/order"
+        hit = lambda r: int(max(range(len(r["logits"])), key=r["logits"].__getitem__)) == r["label"]
+        report["paired_bootstrap_accuracy_delta"] = paired_delta_ci(
+            [hit(r) for r in A], [hit(r) for r in B]
+        )
 
-    A = json.loads(Path(args.paired[0]).read_text())["rows"]
-    B = json.loads(Path(args.paired[1]).read_text())["rows"]
-    assert len(A) == len(B), "paired bootstrap needs identical row counts/order"
-    hit = lambda r: int(max(range(len(r["logits"])), key=r["logits"].__getitem__)) == r["label"]
-    report["paired_bootstrap_accuracy_delta"] = paired_delta_ci(
-        [hit(r) for r in A], [hit(r) for r in B]
-    )
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.out).write_text(json.dumps(report, indent=2))
+    print(json.dumps(report, indent=2)[:2000])
 
-Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-Path(args.out).write_text(json.dumps(report, indent=2))
-print(json.dumps(report, indent=2)[:2000])
+
+if __name__ == "__main__":
+    raise SystemExit(main())

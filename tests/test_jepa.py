@@ -13,6 +13,7 @@ from jev_qwen.jepa import (
     JEPAState,
     apply_context_masking,
     collapse_diagnostics,
+    jepa_loss,
     representation_similarity,
     sample_target_spans,
     shares_parameters,
@@ -115,10 +116,12 @@ def test_collapse_diagnostics_flag_constant_reps():
     d = collapse_diagnostics(const)
     assert d["collapse_ratio"] == 1.0
     assert d["mean_std"] < 1e-3
+    assert d["effective_rank"] < 1.01
     healthy = torch.randn(256, 16)
     d2 = collapse_diagnostics(healthy)
     assert d2["collapse_ratio"] == 0.0
     assert d2["mean_std"] > 0.5
+    assert d2["effective_rank"] > 5.0
 
 
 def test_similarity_reports_sane_values():
@@ -159,3 +162,38 @@ def test_qwen_forward_backward_smoke():
     assert torch.isfinite(out["loss"])
     out["loss"].backward()
     assert any(p.grad is not None for p in state.context.parameters())
+
+
+def test_context_regularizer_adds_terms():
+    cfg = JEPAConfig(
+        hidden_dim=8,
+        regularize_context=True,
+        var_weight=1.0,
+        cov_weight=1.0,
+    )
+    pred = torch.randn(2, 6, 8)
+    target = torch.randn(2, 6, 8)
+    context = torch.randn(2, 6, 8)
+    mask = torch.zeros(2, 6, dtype=torch.bool)
+    mask[:, 2:4] = True
+    _, parts = jepa_loss(pred, target, mask, cfg, context)
+    assert "var_context" in parts
+    assert "cov_context" in parts
+
+
+def test_anchor_term_is_added_when_enabled():
+    cfg = JEPAConfig(hidden_dim=8, anchor_weight=1.0)
+    pred = torch.randn(2, 6, 8)
+    target = torch.randn(2, 6, 8)
+    context = torch.randn(2, 6, 8)
+    mask = torch.zeros(2, 6, dtype=torch.bool)
+    mask[:, 2:4] = True
+    _, parts = jepa_loss(pred, target, mask, cfg, context)
+    assert "anchor" in parts
+    assert parts["anchor"] >= 0
+
+
+def test_top_k_context_freezing_keeps_low_blocks_fixed():
+    state, _ = make_state(train_last_k_layers=1)
+    assert all(not p.requires_grad for p in state.context.blocks[0].parameters())
+    assert all(p.requires_grad for p in state.context.blocks[1].parameters())

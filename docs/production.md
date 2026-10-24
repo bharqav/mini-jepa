@@ -3,8 +3,9 @@
 What "production ready" means for this project, and what is verified.
 
 ## Serving (`jev_qwen.api`, uvicorn)
+
 | behaviour | status |
-|---|---|
+|-----------|--------|
 | model loaded once at startup, never per request | verified |
 | `/health` liveness (always 200 while process up) | verified |
 | `/ready` readiness (503 until weights resident) | verified |
@@ -12,6 +13,8 @@ What "production ready" means for this project, and what is verified.
 | scoped keys (`decide`, `answer`) with optional per-key `rps`/`burst`; multiple keys supported for rotation | verified |
 | explicit dev mode (`JEV_DEV_MODE=1` / `--dev`) disables auth and logs a warning | verified |
 | request limits: body bytes, state chars, question count, candidate count → 413 | verified (1MB body, 25000-char state, 40 questions, 64 candidates) |
+| request bodies require `Content-Length`; chunked uploads are rejected with 411 | verified |
+| `X-Content-Type-Options`, `Cache-Control: no-store`, `Referrer-Policy` on responses | verified |
 | invalid schema → 422, never a fabricated prediction | verified |
 | in-process per-client token-bucket rate limiting → 429 + `Retry-After`; per-key quota independent | verified |
 | bounded concurrency (`JEV_MAX_CONCURRENCY`, 0 = unbounded) → 503 with `Retry-After: 1` when full | verified |
@@ -20,7 +23,30 @@ What "production ready" means for this project, and what is verified.
 | structured JSON logs (`event`, `request_id`, `latency_s`, `error_type`) | verified |
 | structured access logs with client + key id, no bodies/tokens | verified |
 | graceful shutdown releases the model | implemented |
+| CUDA forwards serialized by an in-process lock (no allocator interleaving) | implemented |
+| optional startup warmup (`JEV_WARMUP=1`) | implemented |
 | TLS termination | **not in-process**; reverse proxy required (`deploy/nginx.conf.example`) |
+
+```mermaid
+flowchart TB
+    A[uvicorn startup] --> B[Load checkpoint\nonce at startup\nnever per request]
+    B --> C{Warmup\nenabled?}
+    C -->|yes| D[Run one request\nthermalise CUDA allocator]
+    C -->|no| E[Ready\n/ready returns 200]
+    D --> E
+    E --> F[Request arrives\n/v1/decide or /v1/answer]
+    F --> G{Auth\nbearer token\nscoped key?}
+    G -->|no| H[401 Unauthorized\nstructured access log]
+    G -->|yes| I{Validate\nschema + limits\n413 if oversized}
+    I -->|invalid| J[422 or 413\nnever fabricate answer]
+    I -->|valid| K{Rate limit\nper-client + per-key\ntoken bucket}
+    K -->|exceeded| L[429 Retry-After]
+    K -->|ok| M{Concurrency\nJEV_MAX_CONCURRENCY}
+    M -->|full| N[503 Retry-After: 1]
+    M -->|ok| O[Inference\nserialize CUDA forwards\nautocast + chunking]
+    O --> P{Metrics\n+ access log\nrequest_id + latency}
+    P --> Q[200 + response\nX-Request-ID echoed]
+```
 
 Tunables via env: `JEV_CHECKPOINT`, `JEV_API_TOKEN`, `JEV_API_KEYS`,
 `JEV_API_KEYS_FILE`, `JEV_DEV_MODE`, `JEV_TRUSTED_PROXIES`,
@@ -28,7 +54,7 @@ Tunables via env: `JEV_CHECKPOINT`, `JEV_API_TOKEN`, `JEV_API_KEYS`,
 `JEV_RATE_LIMIT_MAX_CLIENTS`, `JEV_MAX_CONCURRENCY`, `JEV_MAX_BODY_BYTES`,
 `JEV_MAX_STATE_CHARS`, `JEV_MAX_QUESTIONS`, `JEV_MAX_CANDIDATES`,
 `JEV_METRICS_ENABLED`, `JEV_LOG_LEVEL`, `JEV_OTEL_ENABLED`, `JEV_OTEL_ENDPOINT`,
-`JEV_OTEL_SERVICE_NAME`.
+`JEV_OTEL_SERVICE_NAME`, `JEV_WARMUP`.
 
 The limiter keeps one bucket per peer address (bounded LRU) and one bucket per
 key with a per-key override. With N replicas each instance enforces its own
@@ -57,9 +83,25 @@ Five identical requests returned **max score delta 0.0** on GPU. Note that
 - Bounded internal chunking (`settings.max_batch`); on CUDA OOM the chunk
   halves and retries down to a single question, so a large request degrades
   in latency rather than failing.
-- Measured: 3.3 GB peak training VRAM, 1.3 GB inference on an 8.1 GB card.
+- Measured idle-GPU inference VRAM: **1,348.9 MB** peak allocated /
+  **1,366.0 MB** reserved on RTX 5060 (8.1 GB) via WSL2, CUDA 12.8.
+- Peak training VRAM at micro-batch 8 x accum 4, bf16, 512 state tokens:
+  **3.3 GB** on the same card.
 - `max_input_chars` rejects oversized states before any model work instead of
   silently truncating.
+
+```mermaid
+flowchart TB
+    A[Incoming request] --> B{Size check\nbody bytes\nstate chars\nquestions / candidates}
+    B -->|413| C[Reject early\nno model work]
+    B -->|ok| D{Concurrency\nJEV_MAX_CONCURRENCY}
+    D -->|full| E[503 Retry-After: 1]
+    D -->|ok| F[Chunk + forward\nserialize CUDA\nautocast bf16]
+    F -->|OOM| G[Halve chunk\nretry down to 1]
+    G -->|ok| H[Return scores]
+    G -->|still OOM| I[503 unrecoverable\n+ structured log]
+    F -->|ok| H
+```
 
 ## Training / evaluation
 - Gradient checkpointing: opt-in via `model.gradient_checkpointing: true`
@@ -113,8 +155,10 @@ overhead for a metric already known to be ~1e-7.
   independently of the per-client bucket.
 - TLS is not terminated in-process. A reverse proxy is required; the example
   nginx config has not been load-tested as part of this repo.
-- Single-process; no queueing or horizontal scaling. Bounded concurrency via
-  `JEV_MAX_CONCURRENCY`.
+- Single-process; no cross-request queueing or dynamic batching, and no
+  horizontal scaling. Bounded concurrency via `JEV_MAX_CONCURRENCY`; CUDA
+  forwards are serialized, so extra concurrency buys queueing only, not
+  parallel GPU work.
 - No committed dependency lock file for the whole stack; CI uses
   `requirements/constraints.txt` with a pinned torch build (CPU/cu128), and a
   uv-based lock is a candidate follow-up.

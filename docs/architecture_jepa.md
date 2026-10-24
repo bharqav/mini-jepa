@@ -9,15 +9,30 @@
 ## 1. JEPA principles used (from I-JEPA: Assran et al., 2023)
 
 | Principle | Implementation (`src/jev_qwen/jepa.py`) |
-|---|---|
+|-----------|----------------------------------------|
 | Context encoder on masked input | `EncoderStack` (first-N Qwen blocks), sees mask-vector spans |
 | Target encoder, independent params | `copy.deepcopy` of context init; `requires_grad_(False)`; assert no shared storage |
 | Stop-gradient / EMA target updates | target forward under `torch.no_grad`, `.detach()` targets; `ema_update(m)` |
-| Latent predictor | `LatentPredictor`: mask tokens + visible reps → predicted target reps |
+| Latent predictor | `LatentPredictor`: mask tokens + context reps → predicted target reps |
 | Representation-space loss | MSE (+ optional cosine) **only at masked positions** |
 | Block masking | `sample_target_spans`: contiguous spans, not i.i.d. tokens |
 | Collapse prevention | stop-grad + EMA (primary); VICReg variance hinge + covariance penalty (secondary) |
-| Diagnostics | `collapse_diagnostics` (mean/min std, collapse ratio, cov norm), `representation_similarity` (MSE, cosine, linear CKA) |
+| Diagnostics | `collapse_diagnostics` (mean/min std, collapse ratio, cov norm, effective rank), `representation_similarity` (MSE, cosine, linear CKA) |
+
+```mermaid
+flowchart TB
+    A[Input text\nstate + question\n+ candidates] --> B[Tokenize]
+    B --> C[Block masking\ncontiguous spans\nreplace with mask vector]
+    C --> D[Context encoder\ntrainable Qwen blocks\nsees masked input]
+    C --> E[Target encoder\nfrozen or EMA copy\nsees unmasked input\nno_grad]
+    D --> F[Latent predictor\nmask tokens + context reps\n→ predicted target reps]
+    E --> G[Loss at masked positions\nMSE + cosine\n+ VICReg terms]
+    F --> G
+    G --> H{EMA?}
+    H -->|yes| I[EMA update target\nfrom context encoder]
+    I --> D
+    H -->|no| J[Save checkpoint\ncontext + predictor\n+ meta]
+```
 
 ## 2. Non-canonical adaptations (text + decoder-only backbone)
 
@@ -32,6 +47,16 @@
    discrete; there is no pixel masking equivalent).
 
 ## 3. Information-flow / isolation guarantees
+
+```mermaid
+flowchart LR
+    A[Context encoder] -->|masked embeddings| B[Latent predictor]
+    C[Target encoder] -->|unmasked embeddings\ndetached| D[Loss computation]
+    B -->|predicted reps| D
+    D -->|stop-grad + EMA| A
+    style C fill:#ffcccc
+    style D fill:#ccffcc
+```
 
 - `apply_context_masking` replaces target-span embeddings BEFORE the context
   encoder; the predictor receives only masked-context reps + mask tokens.
@@ -61,13 +86,22 @@ as learning if `collapse_ratio == 0` and `mean_std` stays healthy.
 The toy smoke path above is complemented by a real-weight pipeline:
 
 | Component | Location |
-|---|---|
+|-----------|----------|
 | Packed text dataset | `src/jev_qwen/jepa_data.py` (`record_text`, `pack_sequences`, `build_packed_dataset`, `make_batches`) |
 | Pretraining/eval CLI | `scripts/train_jepa.py` |
 | Causal EMA config | `configs/jepa_qwen.yaml` |
 | Frozen-target config | `configs/jepa_qwen_frozen.yaml` |
 | Frozen decision probe | `configs/jepa_probe.yaml`, `configs/jepa_probe_bidir.yaml` |
 | Backbone init from JEPA | `src/jev_qwen/train.py:init_backbone_from_jepa`, `scripts/train.py --init-from-jepa` |
+
+```mermaid
+flowchart TB
+    A[Packed decision text\nstate + question\n+ candidates\nno labels] --> B[JEPA pretrain\ncontext + predictor\nEMA or frozen target]
+    B --> C[Save JEPA checkpoint\ncontext.safetensors\npredictor.safetensors\nmask_vector.safetensors\nmeta.json]
+    C --> D[Decision probe\nfreeze backbone\ntrain only CompatHead\ninit from JEPA context]
+    D --> E[Evaluate probe\naccuracy, NLL, ECE\nchoice / noul / AUC]
+    E --> F[Compare against\nfrozen Qwen baseline\nsame probe config]
+```
 
 **Data path.** `record_text` concatenates state, instructions and candidate
 text but deliberately drops the label. Streams are tokenized, shuffled with a
@@ -103,3 +137,18 @@ initialisation does **not** improve this downstream decision probe in either
 attention mode. This is a negative result for the current protocol, not
 evidence that JEPA is better. Full metrics:
 `results/jepa_qwen_results.json`.
+
+**Standard downstream probes (single seed).** `scripts/evaluate_jepa.py`
+adds frozen linear/kNN probes on GLUE SST-2 and STS-B against frozen Qwen,
+random-init Qwen, BERT-base MLM and SimCSE. Causal JEPA is below frozen Qwen on
+both tasks (SST-2 linear 0.828 vs 0.847; STS-B Spearman 0.462 vs 0.479) and
+well below SimCSE on STS-B (0.747). Effective rank exposes representation
+collapse that mean-std missed: causal JEPA 165 vs 236 on SST-2 and 369 vs 450
+on STS-B; bidirectional JEPA is severely collapsed (rank 2.5 / 6.4) despite a
+healthy-looking per-dimension std, explaining its near-zero STS-B correlation.
+A context-VICReg attempt raised token-level rank but left the target/predictor
+collapsed and made pooled sentence rank worse (7.9 / 34.5); the next iteration
+must regularise or whiten the target/pooled representation itself, then rerun
+these probes across seeds. Metrics:
+`results/jepa_probe_results.json`, `results/jepa_probe_bidir_results.json`,
+`results/jepa_probe_ctx_vicreg.json`.

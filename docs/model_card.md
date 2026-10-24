@@ -8,7 +8,7 @@ generating text.
 ## Model details
 
 | item | value |
-|---|---|
+|------|-------|
 | Base model | `Qwen/Qwen3-0.6B` |
 | Base revision | `c1899de289a04d12100db370d81485cdf75e47ca` |
 | Head variants | `compat` (shared candidate projections) and `reference` (choice head) |
@@ -17,6 +17,13 @@ generating text.
 | Task types | `choice` (2–8 candidates), `score` (ordered levels), `noul` (no/yes) |
 | Checkpoint format | `head.safetensors` plus `meta.json` and copied config |
 | License | code MIT; backbone Apache-2.0; **dataset license is `unknown`** |
+
+```mermaid
+flowchart LR
+    A[Qwen3-0.6B\nfrozen backbone\nfirst 12 of 28 layers] --> B[LoRA adapters\ntop-K attention\nprojections]
+    B --> C[Decision head\nCompatHead or\nChoiceHead]
+    C --> D[Output\nprobabilities\n+ confidence\nzero tokens generated]
+```
 
 The checkpoint records the backbone revision and head config in `meta.json`.
 `load_checkpoint` refuses a legacy `head.pt` and cross-checks LoRA presence.
@@ -47,7 +54,7 @@ Held-out test subset: 2,000 questions (249 score, 902 choice, 849 noul), fixed
 across seeds. Three seeds per head, 3 epochs, same data and test rows.
 
 | metric | compat (mean ± std) | reference (mean ± std) |
-|---|---|---|
+|--------|---------------------|------------------------|
 | accuracy | **0.667 ± 0.053** | 0.629 ± 0.031 |
 | NLL | 0.734 ± 0.084 | 0.799 ± 0.052 |
 | Brier | 0.422 ± 0.049 | 0.456 ± 0.030 |

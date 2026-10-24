@@ -1,18 +1,18 @@
 {
   "device": "RTX 5060 Laptop GPU (8.1 GB), WSL2 + CUDA 12.8 wheels",
-  "model": "compat head + LoRA, 12 Qwen layers, best checkpoint",
-  "samples": 30,
+  "model": "jev-qwen-0.2.0@final",
+  "samples": 10,
   "warmups": "1 per batch size (excluded)",
-  "timing": "CUDA-synchronized wall clock",
-  "cold_latency_s": 0.8125,
+  "timing": "CUDA-synchronized wall clock on idle GPU",
+  "model_load_s": 12.9788,
+  "first_request_latency_s": 1.038,
   "batches": {
-    "1":  {"median_s": 0.02127, "p95_s": 0.02809, "throughput_qps": 47.0},
-    "4":  {"median_s": 0.02196, "p95_s": 0.03242, "throughput_qps": 182.1},
-    "8":  {"median_s": 0.02872, "p95_s": 0.03986, "throughput_qps": 278.6},
-    "16": {"median_s": 0.04335, "p95_s": 0.05084, "throughput_qps": 369.1}
+    "1":  {"median_s": 0.027996, "p95_s": 0.041013, "throughput_qps": 35.72},
+    "4":  {"median_s": 0.037901, "p95_s": 0.059144, "throughput_qps": 105.54},
+    "8":  {"median_s": 0.029096, "p95_s": 0.031853, "throughput_qps": 274.95}
   },
-  "peak_vram_inference_mb": 1345,
-  "peak_vram_training_mb": 3298.8,
+  "peak_vram_mb": 1348.9,
+  "reserved_vram_mb": 1366.0,
   "tokens_generated_per_decision": 0,
-  "note": "VRAM figures measured with torch.cuda.max_memory_allocated (MiB). Training peak is for micro-batch 8 x accum 4 at 512 state tokens."
+  "note": "VRAM figures measured with torch.cuda.max_memory_allocated and max_memory_reserved (MiB)."
 }

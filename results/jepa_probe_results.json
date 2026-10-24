@@ -1,0 +1,73 @@
+{
+  "model": "Qwen/Qwen3-0.6B",
+  "revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+  "num_layers": 8,
+  "pooling": "mean",
+  "jepa": "runs/jepa-qwen-frozen-20261023-165100/jepa/context.safetensors",
+  "tasks": {
+    "sst2": {
+      "jepa": {
+        "linear_accuracy": 0.8279816508293152,
+        "knn_accuracy": 0.752293586730957,
+        "effective_rank": 165.4606170654297
+      },
+      "frozen_qwen": {
+        "linear_accuracy": 0.8474770784378052,
+        "knn_accuracy": 0.8038991093635559,
+        "effective_rank": 235.6855926513672
+      },
+      "random_qwen": {
+        "linear_accuracy": 0.5745412707328796,
+        "knn_accuracy": 0.588302731513977,
+        "effective_rank": 156.87547302246094
+      },
+      "mlm_bert": {
+        "linear_accuracy": 0.85550457239151,
+        "knn_accuracy": 0.8119266033172607,
+        "effective_rank": 149.7310333251953
+      },
+      "simcse": {
+        "linear_accuracy": 0.8440366983413696,
+        "knn_accuracy": 0.8474770784378052,
+        "effective_rank": 129.64883422851562
+      }
+    },
+    "stsb": {
+      "jepa": {
+        "linear_spearman": 0.46166397942389525,
+        "knn_spearman": 0.48898059449863174,
+        "effective_rank": 369.45477294921875,
+        "retrieval_r1": 0.2669999897480011,
+        "retrieval_mrr": 0.3429207503795624
+      },
+      "frozen_qwen": {
+        "linear_spearman": 0.4787375358381835,
+        "knn_spearman": 0.5572324330753589,
+        "effective_rank": 450.1869812011719,
+        "retrieval_r1": 0.3089999854564667,
+        "retrieval_mrr": 0.38932740688323975
+      },
+      "random_qwen": {
+        "linear_spearman": 0.1488206167296471,
+        "knn_spearman": 0.16609671887859734,
+        "effective_rank": 181.67103576660156,
+        "retrieval_r1": 0.09399999678134918,
+        "retrieval_mrr": 0.1359873116016388
+      },
+      "mlm_bert": {
+        "linear_spearman": 0.5497237536443312,
+        "knn_spearman": 0.6269681270438816,
+        "effective_rank": 321.4026184082031,
+        "retrieval_r1": 0.28600001335144043,
+        "retrieval_mrr": 0.3662968575954437
+      },
+      "simcse": {
+        "linear_spearman": 0.746556829814723,
+        "knn_spearman": 0.8275426162259144,
+        "effective_rank": 341.2601013183594,
+        "retrieval_r1": 0.4050000011920929,
+        "retrieval_mrr": 0.485596239566803
+      }
+    }
+  }
+}

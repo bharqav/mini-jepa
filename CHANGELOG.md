@@ -57,6 +57,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `results/jepa_qwen_results.json`. Measured single-seed result is negative:
   JEPA init 0.4975 vs pretrained baseline 0.5745 accuracy; reported honestly.
 
+- **Standard downstream JEPA probes.** `scripts/evaluate_jepa.py` evaluates
+  frozen representations with linear ridge and cosine kNN probes on GLUE
+  SST-2 and STS-B against frozen Qwen, random-init Qwen, BERT MLM and SimCSE
+  baselines. Results in `results/jepa_probe_results.json` and
+  `results/jepa_probe_bidir_results.json` confirm the negative result and
+  expose partial/severe dimensional collapse through an effective-rank
+  diagnostic. Added EMA momentum scheduling (`0.996 -> 1.0`), effective-rank
+  logging, and EMA-only/VICReg-only ablation configs. A context-VICReg collapse
+  fix was tried and also failed; kept as a documented negative ablation.
+  Anchored and top-block-only variants were added; the full-context anchor is
+  the best measured JEPA variant on STS-B kNN (0.589 vs 0.557 frozen) but still
+  loses on SST-2 and STS-B linear/retrieval.
+
+- **Serving hardening.** CUDA forwards are serialized with an in-process
+  lock; chunked request bodies without `Content-Length` are rejected with
+  411; responses carry `X-Content-Type-Options`, `Cache-Control: no-store`
+  and `Referrer-Policy`. Added a tagged-release workflow (package, GitHub
+  release, GHCR CPU image), a pre-commit config, and a `jev-qwen` entry
+  point for the serve extra.
+
 ### Security
 
 - **Safetensors-only checkpoint loading.** `save_checkpoint` now writes

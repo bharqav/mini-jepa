@@ -28,6 +28,25 @@ from .utils import autocast, get_device, seed_all, to_device
 TASK_NAMES = {v: k for k, v in TASK_TYPES.items()}
 
 
+def accumulation_schedule(num_batches: int, accumulation_steps: int) -> list[tuple[int, bool]]:
+    """Return each microbatch's loss divisor and optimizer-step boundary.
+
+    A final partial window is retained and averaged by its actual size, rather
+    than being silently dropped or underweighted.
+    """
+    if num_batches < 1:
+        raise ValueError("num_batches must be >= 1")
+    if accumulation_steps < 1:
+        raise ValueError("accumulation_steps must be >= 1")
+
+    schedule: list[tuple[int, bool]] = []
+    for start in range(0, num_batches, accumulation_steps):
+        window_size = min(accumulation_steps, num_batches - start)
+        schedule.extend((window_size, False) for _ in range(window_size - 1))
+        schedule.append((window_size, True))
+    return schedule
+
+
 def init_backbone_from_jepa(network, source) -> None:
     """Load a JEPA context encoder into a frozen decision backbone.
 
@@ -222,7 +241,8 @@ def train(config: dict[str, Any], run_name: str, resume: str | None = None) -> P
     ]
     optimizer = torch.optim.AdamW(groups, weight_decay=float(optim.get("weight_decay", 0.01)))
     accum = int(optim.get("grad_accum_steps", 1))
-    total_steps = max(optim["epochs"] * (len(train_loader) // accum), 1)
+    schedule = accumulation_schedule(len(train_loader), accum)
+    total_steps = max(optim["epochs"] * sum(should_step for _, should_step in schedule), 1)
     from transformers import get_cosine_schedule_with_warmup
 
     sched = get_cosine_schedule_with_warmup(
@@ -237,23 +257,22 @@ def train(config: dict[str, Any], run_name: str, resume: str | None = None) -> P
     for epoch in range(optim["epochs"]):
         tot_loss, tot_correct, tot_n = 0.0, 0, 0
         optimizer.zero_grad()
-        nb = (len(train_loader) // accum) * accum
         for micro, batch in enumerate(train_loader, 1):
-            if micro > nb:
-                break  # drop incomplete final accumulation group
+            window_size, should_step = schedule[micro - 1]
             batch = to_device(batch, device)
             with autocast(device, optim.get("precision", "bf16")):
                 logits = network(**batch)
                 loss = F.cross_entropy(logits, batch["labels"])
             if scaler.is_enabled():
-                scaler.scale(loss / accum).backward()
+                scaler.scale(loss / window_size).backward()
             else:
-                (loss / accum).backward()
+                (loss / window_size).backward()
+            loss_value = float(loss.detach().item())
             correct = int((logits.argmax(-1) == batch["labels"]).sum())
-            tot_loss += float(loss) * len(logits)
+            tot_loss += loss_value * len(logits)
             tot_correct += correct
             tot_n += len(logits)
-            if micro % accum:
+            if not should_step:
                 continue
             if scaler.is_enabled():
                 scaler.unscale_(optimizer)
@@ -271,7 +290,7 @@ def train(config: dict[str, Any], run_name: str, resume: str | None = None) -> P
                     step,
                     split="train",
                     epoch=epoch,
-                    loss=float(loss),
+                    loss=loss_value,
                     accuracy=correct / len(logits),
                 )
             if step % log.get("save_every", 500) == 0:

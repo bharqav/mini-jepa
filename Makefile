@@ -1,4 +1,4 @@
-.PHONY: help install install-gpu test test-cov test-real lint format format-check type-check check security audit docs load-test keys docker-build clean bench smoke jepa serve
+.PHONY: help install install-gpu test test-cov test-real lint format format-check type-check check security audit docs load-test keys docker-build clean bench smoke jepa serve serve-demo demo quickstart
 
 PY ?= python
 VENV := .venv
@@ -77,8 +77,26 @@ jepa: ## Run the JEPA latent-prediction smoke experiment
 bench: ## Benchmark a checkpoint (pass CKPT=path)
 	$(BIN)/python scripts/benchmark.py --checkpoint $(CKPT) --batch-sizes 1 4 8
 
-serve: ## Serve the API locally (pass CKPT=path)
-	$(BIN)/python -m uvicorn jev_qwen.api:app --host 127.0.0.1 --port 8000
+serve: ## Serve the API locally (pass CKPT=path, defaults to dev mode)
+	$(BIN)/python -m jev_qwen.api --dev
+
+serve-demo: ## Train a tiny checkpoint and serve it with dev mode
+	$(MAKE) smoke
+	$(BIN)/python -m jev_qwen.api --dev
+
+demo: ## End-to-end demo: train tiny model + run a decision + open docs
+	$(MAKE) smoke
+	@echo "=== Demo decision ==="
+	$(BIN)/python scripts/decide.py --checkpoint runs/smoke*/checkpoints/best \
+	  --state "A server is returning repeated HTTP 503 errors." \
+	  --type choice --question "What should the operator do first?" \
+	  --candidate "inspect:Inspect service health and dependencies." \
+	  --candidate "delete:Delete the production database." \
+	  --candidate "ignore:Ignore the incident."
+	@echo "=== API docs will open on first request to /docs ==="
+	$(BIN)/python -m jev_qwen.api --dev
+
+quickstart: install demo ## One command: install + demo
 
 clean: ## Remove caches and build artifacts
 	rm -rf .pytest_cache .ruff_cache build dist src/*.egg-info

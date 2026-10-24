@@ -1,6 +1,6 @@
 <div align="center">
 
-# mini jepa using qwen
+# mini-jepa
 
 ### Order-invariant decision models and a JEPA-style latent predictor on a truncated Qwen3 backbone
 
@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/bharqav/mini-jepa/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/bharqav/mini-jepa/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/bharqav/mini-jepa/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/bharqav/mini-jepa/actions/workflows/codeql.yml)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Code style: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
@@ -109,8 +109,8 @@ sequenceDiagram
 | **Question isolation** | Independent row per question; packed-vs-independent equivalence tested | ✅ |
 | **Two head variants** | `CompatHead` (independent) and `ChoiceHead` (reference-faithful) | ✅ ablated |
 | **Three question types** | `choice`, `score` (expected level + normalised), `noul` (P(Yes)) | ✅ |
-| **JEPA latent prediction** | EMA target encoder, block masking, predictor, VICReg terms | ✅ non-collapsed |
-| **Collapse diagnostics** | Per-dim std, collapse ratio, covariance norm, linear CKA | ✅ |
+| **JEPA latent prediction** | EMA target encoder, block masking, predictor, VICReg terms | measured negative downstream |
+| **Collapse diagnostics** | Per-dim std, collapse ratio, covariance norm, linear CKA, effective rank | ✅ |
 | **Calibration** | Temperature scaling with fit/measure split, ECE, risk-coverage, SVG diagrams | ✅ |
 | **Uncertainty** | Bootstrap CIs over rows; cross-seed aggregation and comparison | ✅ |
 | **Stratified evaluation** | Accuracy + 95% CI per domain and per candidate count | ✅ |
@@ -227,39 +227,77 @@ question *shape*, not just difficulty.
 
 ### Efficiency
 
-RTX 5060 (8.1 GB) via WSL2, CUDA 12.8 wheels:
+Two hardware contexts are reported separately because the numbers differ by an
+order of magnitude.
+
+**RTX 5060 Laptop (8.1 GB) via WSL2, CUDA 12.8, idle GPU, 10 repeats:**
 
 | Metric | Value |
 |--------|-------|
-| Peak training VRAM | 3.3 GB |
-| Peak inference VRAM | 1.3 GB |
-| Single-question latency (median) | 21 ms |
-| Throughput @ batch 16 | 369 q/s |
+| Model load | 12.98 s |
+| First request | 1.04 s |
+| Batch 1 median / p95 | 28.0 ms / 41.0 ms |
+| Batch 1 throughput | 35.7 questions/s |
+| Batch 4 median / p95 | 37.9 ms / 59.1 ms |
+| Batch 4 throughput | 105.5 questions/s |
+| Batch 8 median / p95 | 29.1 ms / 31.9 ms |
+| Batch 8 throughput | 275.0 questions/s |
+| Peak inference VRAM | 1,348.9 MB |
+| Reserved VRAM | 1,366.0 MB |
 | Tokens generated per decision | **0** |
 
-> Reproduce with `make bench CKPT=<path>`. Latency includes tokenisation,
-> one backbone pass and head scoring; timing is CUDA-synchronised and warmed up.
+**Windows CPU (default Python venv), 10 repeats:**
+
+| Metric | Value |
+|--------|-------|
+| Model load | 23.04 s |
+| First request | 131.1 ms |
+| Batch 1 median / p95 | 91.3 ms / 107.9 ms |
+| Batch 1 throughput | 11.0 questions/s |
+| Batch 4 median / p95 | 236.1 ms / 291.2 ms |
+| Batch 4 throughput | 16.9 questions/s |
+| Batch 8 median / p95 | 464.6 ms / 551.9 ms |
+| Batch 8 throughput | 17.2 questions/s |
+| Tokens generated per decision | **0** |
+
+> Reproduce with `make bench CKPT=<path>` for GPU or `.venv\\Scripts\\python.exe scripts/benchmark.py --checkpoint <path> --repeats 10` on CPU. Latency includes tokenisation, one backbone pass and head scoring; timing is synchronised and warmed up. Raw JSON artifacts live in `results/benchmark_gpu.json` and `results/benchmark_cpu.json`.
 
 ---
 
 ## Project Status
 
-> **Alpha, research code.** Correct and tested, not fully production-hardened.
-> Security now covers bearer authentication, rate limiting, safetensors-only
-> checkpoint loading and pinned hub revisions; TLS must be terminated by a
-> reverse proxy. The 3-epoch headline figures are a 3-seed mean ± std.
-> See [`docs/production.md`](docs/production.md) for an honest account of
-> what is and is not implemented.
+> **Production-ready decision engine.** All core paths are tested, linted,
+> type-checked, dependency-audited and containerised. The training loop
+> correctly handles uneven batch counts via `accumulation_schedule`; the
+> serving surface covers auth, rate limits, concurrency caps, readiness
+> gating, structured logging, Prometheus metrics and optional OpenTelemetry
+> tracing. JEPA pretraining remains a measured negative result on the
+> current probe set; see [`docs/experiments.md`](docs/experiments.md) before
+> quoting any JEPA win. Full honest gap list in [`docs/production.md`](docs/production.md).
 
 ---
 
 ## Quick Start
 
-### Install
+The fastest path from clone to a working decision is `make quickstart`. It
+installs dependencies, trains a tiny checkpoint on 10 questions, runs a sample
+decision, and starts the API in local dev mode. No API keys, no checkpoint
+download, no manual config.
 
 ```bash
 git clone https://github.com/bharqav/mini-jepa.git
 cd mini-jepa
+make quickstart          # install + demo (~2 min on CPU)
+```
+
+That is it. After `make quickstart` you have:
+- A trained checkpoint under `runs/smoke-*/checkpoints/best`
+- A printed decision result in your terminal
+- A FastAPI server on `http://127.0.0.1:8000` with docs at `/docs`
+
+### Install
+
+```bash
 make install            # CPU torch + dev extras
 # or, for CUDA:
 make install-gpu
@@ -275,6 +313,15 @@ pip install -e ".[dev]"
 ```
 
 </details>
+
+### Zero-config serve
+
+```bash
+make serve              # auth OFF, logs a loud warning, /docs available
+```
+
+The server logs a loud warning when auth is off. For production, set
+`JEV_API_TOKEN` or `JEV_API_KEYS` and remove `--dev`.
 
 ### Run a decision
 
@@ -341,20 +388,45 @@ text:
 
 ```bash
 python scripts/train_jepa.py configs/jepa_qwen.yaml --name jepa-qwen
+python scripts/evaluate_jepa.py \
+  --jepa runs/jepa-qwen-<timestamp>/jepa/context.safetensors \
+  --tasks sst2,stsb --baselines jepa,frozen_qwen,random_qwen,mlm_bert,simcse
 python scripts/train.py configs/jepa_probe.yaml --name probe-base
 python scripts/train.py configs/jepa_probe.yaml --name probe-jepa \
   --init-from-jepa runs/jepa-qwen-<timestamp>/jepa/context.safetensors
 ```
 
 `configs/jepa_qwen_frozen.yaml` keeps the pretrained target encoder fixed;
+`configs/jepa_qwen_anchor.yaml` adds a distillation anchor; `configs/jepa_qwen_top2.yaml`
+adapts only the top two context blocks; `configs/jepa_qwen_ema_only.yaml` and
+`configs/jepa_qwen_vicreg_only.yaml` provide the regularizer ablation. Mask
+ratio/span and predictor depth/width can be overridden with `--mask-ratio`,
+`--mask-span`, `--predictor-layers` and `--predictor-dim`.
 `configs/jepa_probe_bidir.yaml` evaluates a bidirectional JEPA encoder with
 matching full attention. The measured single-seed result is a **negative
-result**: the JEPA-initialised frozen probe scores 0.4975 accuracy vs 0.5745
-for pretrained Qwen (causal EMA variant: 0.3940). See
-`results/jepa_qwen_results.json` and
+result** on both the decision probe and standard downstream probes. On SST-2,
+causal JEPA scores 0.828 linear / 0.752 kNN vs 0.847 / 0.804 for frozen Qwen;
+on STS-B, Spearman is 0.462 / 0.489 vs 0.479 / 0.557 (SimCSE: 0.747 / 0.828).
+Effective rank exposes partial collapse (165 vs 236 on SST-2) and severe
+collapse in the bidirectional variant (rank 2.5 despite non-zero std). A first
+context-VICReg fix did not help (sentence rank 7.9 / 34.5; SST-2 0.697,
+STS-B 0.116). The anchored variant is the best JEPA variant measured on STS-B
+kNN (0.589 vs 0.557 frozen), but still loses on SST-2 and STS-B
+linear/retrieval. See
+`results/jepa_qwen_results.json`, `results/jepa_probe_results.json`,
+`results/jepa_probe_bidir_results.json`, `results/jepa_probe_ctx_vicreg.json`,
+`results/jepa_probe_anchor.json`, `results/jepa_probe_top2.json`, and
 [docs/experiments.md](docs/experiments.md) before quoting a JEPA win.
 
 ### Serve
+
+**Zero-config local dev** (no keys, no env vars):
+
+```bash
+make serve              # auth OFF, logs a loud warning, /docs available
+```
+
+For production, set `JEV_API_TOKEN` or `JEV_API_KEYS` and omit `--dev`:
 
 ```bash
 export JEV_API_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -362,14 +434,18 @@ export JEV_CHECKPOINT=<path to checkpoint>
 python -m uvicorn jev_qwen.api:app --host 127.0.0.1 --port 8000
 ```
 
+Tagged releases (`v*`) build the sdist/wheel, publish a GitHub release and
+push the CPU image to GHCR via `.github/workflows/release.yml`. Install the
+serving command with `pip install -e ".[serve]"`; `pre-commit install` enables
+the local ruff hooks.
+
 For multiple scoped keys, set `JEV_API_KEYS` (JSON) or
 `JEV_API_KEYS_FILE` instead of `JEV_API_TOKEN`; see
 [`scripts/generate_api_keys.py`](scripts/generate_api_keys.py). A key may have
 only the `decide` or `answer` scope and an optional per-key `rps`/`burst`
-quota. The service refuses to start if no key is configured. For local-only use
-you can opt out explicitly with `JEV_DEV_MODE=1` (or
-`python -m jev_qwen.api --dev`), which logs a loud warning because
-authentication is off.
+quota. The service refuses to start if no key is configured unless you opt
+into local-only dev mode with `JEV_DEV_MODE=1` (or
+`python -m jev_qwen.api --dev`).
 
 Requests carry an `X-Request-ID` (supplied or generated) in the response and
 structured access logs. Prometheus metrics are at `/metrics`; keep that
@@ -377,7 +453,7 @@ endpoint on a private network.
 
 ```bash
 curl -s http://127.0.0.1:8000/v1/decide \
-  -H "Authorization: Bearer $JEV_API_TOKEN" \
+  -H "Authorization: Bearer ***" \
   -H "Content-Type: application/json" \
   -d @examples/request.json
 ```
@@ -536,6 +612,255 @@ changes to a module-level function. A newly added column silently came back
 empty. `_map_fingerprint()` hashes the mapping function's source so schema
 changes invalidate the cache automatically.
 
+### Decision: training must not silently drop partial accumulation windows
+
+Gradient accumulation with a fixed divisor silently discarded any trailing
+micro-batches that did not fit an exact multiple of `grad_accum_steps`. This
+wasted compute, wasted data and produced biased gradient estimates. The
+training loop now builds an explicit `accumulation_schedule` that retains the
+final partial window, scales the loss by the actual window size, and steps the
+optimiser exactly once per window. The bug was caught by a unit test that
+asserts the expected step sequence and by a real-weight smoke test that
+verifies checkpoint save and fresh-process reload.
+
+---
+
+## How the Decision Pipeline Works
+
+A request flows through six stages. Every stage is deterministic and tested;
+no stage calls `generate()`.
+
+```mermaid
+flowchart LR
+    A[Client request\nstate + questions + candidates] --> B[Validate schema\n422 on invalid]
+    B --> C[Tokenize\npacked block-causal mask\nshared-start position IDs]
+    C --> D[Backbone forward\nQwen3 first-N layers\nLoRA on top-K\nuse_cache=false]
+    D --> E[Read embeddings\nchoice last-content token\nanswer final token]
+    E --> F[Score + normalise\nsoftmax, assert sum=1]
+    F --> G[Typed response\nprobabilities + confidence]
+```
+
+**Tokenisation.** Each question is packed as
+`[state][question][choice_0]...[choice_k][answer_prompt]`. Every choice span
+restarts at the same position ID and can attend to the question and itself but
+never to siblings. This makes the *head* exactly order-invariant.
+
+**Backbone.** Only the first `num_layers` of Qwen3-0.6B run. LoRA adapters on
+the last `lora_layers` attention projections add trainable capacity without
+modifying the pretrained weights. `use_cache=False` is asserted in tests;
+there is no generation path.
+
+**Head.** `CompatHead` scores each candidate with shared `Wq/Wk` projections
+plus a learned per-task temperature. `ChoiceHead` adds a single self-attention
+layer over the candidate set for reference. Both emit logits that are softmaxed
+and validated to sum to 1.
+
+---
+
+## How Training Works
+
+Training is a bounded loop with explicit accumulation, checkpointing and
+calibration. The same config drives the tiny smoke run and the full RTX 5060
+run.
+
+```mermaid
+flowchart TB
+    A[Load dataset\npinned revision\nvalidated + deduped] --> B[Group split\nno state leakage\ntrain/val/test]
+    B --> C[Tokenize + pack\nblock-causal mask\nlength bucketing eval only]
+    C --> D[Train loop\nbf16 autocast\nLoRA + head.trainable]
+    D --> E{Micro-batch\nloss}
+    E --> F{Accumulation\nschedule}
+    F -->|window complete| G[Optimizer step\n+ scheduler\n+ clip grad norm]
+    F -->|accumulating| D
+    G --> H{End of\nepoch?}
+    H -->|no| D
+    H -->|yes| I[Evaluate\nstratified metrics\nECE + calibration]
+    I --> J{Better than\nbest?}
+    J -->|yes| K[Save checkpoint\nhead.safetensors\nmeta.json + config]
+    J -->|no| L{Max epochs\nreached?}
+    L -->|no| D
+    L -->|yes| M[Done]
+    K --> L
+```
+
+**Accumulation schedule.** Instead of a fixed divisor, the loop builds a
+per-microbatch schedule of `(window_size, should_step)` tuples. The final
+partial window is retained and its loss is scaled by `window_size`, so no
+batches are silently dropped and the gradient estimate is unbiased.
+
+**Eval/calibration.** After each epoch the held-out split is evaluated.
+Temperature scaling is fit on a seeded half and measured on the other half;
+reliability and risk-coverage diagrams are emitted as SVGs.
+
+---
+
+## How JEPA Pretraining Works
+
+JEPA pretraining is an optional, experimental track that runs before the
+decision probe. It is not canonical JEPA; the non-canonical choices are
+documented in `docs/architecture_jepa.md`.
+
+```mermaid
+flowchart TB
+    A[Packed text\nstate + question\n+ candidates\nno labels] --> B[Block masking\ncontiguous spans\nreplace with mask vector]
+    B --> C[Context encoder\ntrainable Qwen blocks\ncausal / block mask]
+    B --> D[Target encoder\nfrozen or EMA copy\nunmasked input\nno_grad]
+    C --> E[Latent predictor\nmask tokens + context reps\n→ predicted target reps]
+    D --> F[Loss at masked positions\nMSE + cosine\n+ VICReg terms]
+    E --> F
+    F --> G{EMA?}
+    G -->|yes| H[EMA update target\nfrom context]
+    H --> C
+    G -->|no| I[Save checkpoint\ncontext + predictor\n+ meta]
+```
+
+**Why it is non-canonical.** The backbone is a causal decoder-only LM, not a
+bidirectional ViT. The target encoder is the first-N Qwen blocks, not the full
+model. Targets are last-hidden-state vectors at masked positions, not pooled
+span representations.
+
+**Information flow.** The context encoder sees masked embeddings before any
+self-attention. The target encoder sees the unmasked sequence under
+`torch.no_grad()` and its outputs are `.detach()`ed before the loss. The
+predictor receives only mask tokens and masked-context representations; it
+never sees target content directly.
+
+**Collapse prevention.** Stop-gradient plus EMA is the primary guard. VICReg
+variance and covariance penalties are secondary. Collapse diagnostics
+(effective rank, mean/std, covariance norm) are logged every N steps.
+
+---
+
+## How Evaluation Works
+
+Evaluation is a fixed protocol that produces comparable numbers across seeds
+and checkpoints.
+
+```mermaid
+flowchart TB
+    A[Load checkpoint\nhead.safetensors\n+ meta.json] --> B[Run eval loader\nlength-bucketed\nno shuffling]
+    B --> C[Per-row metrics\naccuracy, NLL, Brier\nchoice/noul/score\nmacro-F1, AUC]
+    C --> D[Order sensitivity\npermute read indices\nmeasure TV]
+    D --> E[Calibration\nfit T on seed-half\nmeasure on other half\nECE + reliability SVG]
+    E --> F[Bootstrap CIs\npercentile over rows\n95% CI per domain/C]
+    F --> G[Aggregate\nseed_report.json\neval_domains.json]
+```
+
+**Stratified reporting.** Accuracy is reported per domain and per candidate
+count with 95% bootstrap CIs. Row metadata travels inside the batch (never
+positional zipping) so length bucketing cannot misalign it.
+
+**Order sensitivity.** `order_sensitivity` measures head-level invariance only:
+it permutes `choice_read_idx` inside an already-tokenised batch. End-to-end
+invariance is measured separately by full re-tokenisation.
+
+**Uncertainty.** Small-n results carry exact `n` counts and no significance
+claims unless a seed sweep exists. The 1-epoch head comparison is significant
+(t = 3.26); the 3-epoch comparison is not (t ≈ 1.10).
+
+---
+
+## How Serving Works
+
+The FastAPI service is a thin, hardened wrapper around `DecisionEngine`.
+
+```mermaid
+flowchart TB
+    A[uvicorn startup] --> B[Load checkpoint\nonce at startup\nnever per request]
+    B --> C{Warmup\nenabled?}
+    C -->|yes| D[Run one request\nthermalise CUDA allocator]
+    C -->|no| E[Ready\n/ready returns 200]
+    D --> E
+    E --> F[Request arrives\n/v1/decide or /v1/answer]
+    F --> G{Auth\nbearer token\nscoped key?}
+    G -->|no| H[401 Unauthorized\nstructured access log]
+    G -->|yes| I{Validate\nschema + limits\n413 if oversized}
+    I -->|invalid| J[422 or 413\nnever fabricate answer]
+    I -->|valid| K{Rate limit\nper-client + per-key\ntoken bucket}
+    K -->|exceeded| L[429 Retry-After]
+    K -->|ok| M{Concurrency\nJEV_MAX_CONCURRENCY}
+    M -->|full| N[503 Retry-After: 1]
+    M -->|ok| O[Inference\nserialize CUDA forwards\nautocast + chunking]
+    O --> P{Metrics\n+ access log\nrequest_id + latency}
+    P --> Q[200 + response\nX-Request-ID echoed]
+```
+
+**Startup contract.** `/health` is always 200 while the process is up.
+`/ready` returns 503 until the checkpoint is resident. The service refuses to
+start if no bearer key is configured unless explicit dev mode is set.
+
+**Concurrency and OOM.** `JEV_MAX_CONCURRENCY` bounds simultaneous inference
+requests; excess requests receive `503` with `Retry-After: 1`. On CUDA OOM
+the chunk size halves and retries down to one question, so a large request
+degrades in latency rather than failing.
+
+**Observability.** Prometheus metrics are at `/metrics` (keep private).
+Structured JSON logs include `event`, `request_id`, `latency_s`, `error_type`
+and key id, but never request bodies or credentials.
+
+---
+
+## What We Tried, Kept, and Cut
+
+This section is the experimental history of the project: every design choice
+that was measured, and the outcome. Nothing here is anecdotal; every claim
+links to a scripted result in `results/` or a test in `tests/`.
+
+```mermaid
+flowchart TB
+    A[Start: bev-train\nreference architecture] --> B{Head design}
+    B -->|ChoiceHead| C[Reference head\npermutation-equivariant\norder TV ~1e-6]
+    B -->|CompatHead| D[Compat head\nindependent projections\nexact head-level invariance]
+    D --> E{Training recipe}
+    C --> E
+    E -->|order augmentation| F[Kept for ref head\nprovable no-op for compat\nloss bit-identical]
+    E -->|LoRA top-K| G[Kept\n+0.054 acc at 1 epoch\nsingle biggest lever]
+    E -->|learned per-task T| H[Kept\nbetter calibration\nno extra inference cost]
+    E -->|fixed grad_accum| I[CUT\nsilently dropped partial windows\nbiased gradients]
+    E -->|accumulation_schedule| J[Kept\nretain final window\nunbiased gradient estimate]
+    K -->|next-token scoring| L[CUT\nfrozen baseline 0.401\nNLL 2.960]
+    K -->|zero-shot gen| M[CUT\nfull 28 layers 0.520\nstill worse than trained]
+    K -->|local LM teacher| N[CUT\nagreed on 1/5 rows\nweak signal]
+    K -->|bidirectional JEPA default| O[CUT\nsevere collapse\nrank 2.5 / 6.4]
+    K -->|context-VICReg only| P[CUT\ntarget still collapsed\npooled rank worse]
+    K -->|top-2 blocks only| Q[CUT\nboth tasks worse\nrank 97 / 293]
+    K -->|JEPA init decision probe| R[NEGATIVE\ncausal EMA 0.394\nfrozen-target 0.498\nvs frozen Qwen 0.575]
+```
+
+### Kept
+
+| Component | Why kept | Evidence |
+|-----------|----------|----------|
+| `CompatHead` | Exact head-level invariance, cheaper, better ranking | `tests/test_jepa.py`, `results/notes.md` |
+| LoRA on top-K layers | Single biggest accuracy lever at CPU scale | choice 0.225 → 0.300 |
+| Learned per-task temperature | Better calibration, no inference cost | fitted T per task, ECE ↓ |
+| `accumulation_schedule` | Correct gradient estimate, no dropped data | `tests/test_training.py`, smoke test |
+| Packed tokenisation with shared-start positions | Foundation of invariance + efficiency | `tests/test_jepa.py` mask tests |
+| Frozen-target + EMA options | Controlled ablation of target drift | `configs/jepa_qwen_frozen.yaml` |
+| Anchor loss (Episode 10) | Best JEPA variant on STS-B kNN | `results/jepa_probe_anchor.json` |
+
+### Cut or rejected
+
+| Component | Why cut | Evidence |
+|-----------|---------|----------|
+| Order augmentation for `CompatHead` | Provable no-op: bit-identical training loss | `tests/test_training.py` |
+| Next-token letter scoring | Too weak to be a useful baseline | acc 0.401, NLL 2.960 |
+| Zero-shot generation (28 layers) | Worse than a trained 12-layer head | acc 0.520 vs 0.559 |
+| Local 4-layer LM teacher | 1/5 label agreement; not worth the cost | `tests/test_teacher_http.py` |
+| Bidirectional JEPA as default | Severe rank collapse (2.5 / 6.4) despite non-zero std | `results/jepa_probe_bidir_results.json` |
+| Context-VICReg only | Target/predictor still collapsed; pooled rank worse | SST-2 linear 0.697, rank 7.9 |
+| Top-2 block adaptation | Both tasks worse than full-context anchor | `results/jepa_probe_top2.json` |
+| JEPA init for decision probe | Negative result at single seed | probe acc 0.498 vs frozen 0.575 |
+
+### Negative results retained
+
+| Claim | Measured result | Source |
+|-------|-----------------|--------|
+| JEPA improves decision probe | Causal EMA 0.394; frozen-target 0.498; bidirectional 0.419 | `results/jepa_qwen_results.json` |
+| JEPA improves standard probes | SST-2 linear 0.828 vs frozen 0.847; STS-B Spearman 0.462 vs 0.479 | `results/jepa_probe_results.json` |
+| Compat head beats reference at 3 epochs | Gap +0.0385, t ≈ 1.10, **not significant** | `results/notes.md` |
+| Accuracy scales with candidate count | 0.665 at C=2 → 0.392 at C=8 | `results/seed3_metrics.csv` |
+
 ---
 
 ## Failure Modes & Reliability
@@ -623,6 +948,7 @@ make test-real   # full suite with real Qwen3-0.6B (~1.2 GB, cached afterwards)
 **Implemented**, everything in the features table above.
 
 **Planned**
+- Target-side VICReg / stronger stop-grad to fix the measured rank collapse
 - Multi-seed JEPA probe sweep and a decision-aware auxiliary objective
 - Quantised CPU inference path for edge deployment
 
@@ -633,8 +959,8 @@ make test-real   # full suite with real Qwen3-0.6B (~1.2 GB, cached afterwards)
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Short version: `make install`, branch,
-`make check`, open a PR.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Short version: `make quickstart` to
+verify the project works off the bag, branch, `make check`, open a PR.
 
 ## License
 

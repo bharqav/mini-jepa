@@ -116,6 +116,9 @@ def evaluate_jepa(
     cka_sum = 0.0
     std_sum = 0.0
     collapse_sum = 0.0
+    rank_sum = 0.0
+    context_rank_sum = 0.0
+    target_rank_sum = 0.0
     n_batches = 0
     for batch in make_batches(sequences, batch_size, seed=seed, shuffle=False):
         batch = batch.to(device)
@@ -132,8 +135,13 @@ def evaluate_jepa(
         cos_sum += sim["pred_target_cosine"] * count
         cka_sum += sim["linear_cka"] * count
         diag = collapse_diagnostics(pred)
+        context_diag = collapse_diagnostics(out["context"][mask].float())
+        target_diag = collapse_diagnostics(target)
         std_sum += diag["mean_std"] * count
         collapse_sum += diag["collapse_ratio"] * count
+        rank_sum += diag["effective_rank"] * count
+        context_rank_sum += context_diag["effective_rank"] * count
+        target_rank_sum += target_diag["effective_rank"] * count
         n_batches += 1
     state.train()
     denom = max(n_tokens, 1)
@@ -143,6 +151,9 @@ def evaluate_jepa(
         "eval_linear_cka": cka_sum / denom,
         "eval_mean_std": std_sum / denom,
         "eval_collapse_ratio": collapse_sum / denom,
+        "eval_effective_rank": rank_sum / denom,
+        "eval_context_effective_rank": context_rank_sum / denom,
+        "eval_target_effective_rank": target_rank_sum / denom,
         "eval_tokens": float(n_tokens),
         "eval_batches": float(n_batches),
     }
@@ -157,6 +168,10 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--max-train-questions", type=int, default=None)
     ap.add_argument("--max-test-questions", type=int, default=None)
+    ap.add_argument("--mask-ratio", type=float, default=None)
+    ap.add_argument("--mask-span", type=int, default=None)
+    ap.add_argument("--predictor-layers", type=int, default=None)
+    ap.add_argument("--predictor-dim", type=int, default=None)
     ap.add_argument(
         "--bidirectional", action="store_true", help="use a bidirectional context/target encoder"
     )
@@ -176,6 +191,14 @@ def main() -> int:
         config["data"]["max_train_questions"] = args.max_train_questions
     if args.max_test_questions is not None:
         config["data"]["max_test_questions"] = args.max_test_questions
+    if args.mask_ratio is not None:
+        config["jepa"]["mask_ratio"] = args.mask_ratio
+    if args.mask_span is not None:
+        config["jepa"]["mask_span"] = args.mask_span
+    if args.predictor_layers is not None:
+        config["jepa"]["predictor_layers"] = args.predictor_layers
+    if args.predictor_dim is not None:
+        config["jepa"]["predictor_dim"] = args.predictor_dim
     if args.bidirectional:
         config["jepa"]["bidirectional_context"] = True
     if args.freeze_target:
@@ -192,6 +215,8 @@ def main() -> int:
     steps = int(optim["steps"])
     batch_size = int(optim.get("batch_size", 8))
     precision = optim.get("precision", "bf16")
+    ema_start = float(jepa_cfg.get("ema_momentum", 0.996))
+    ema_end = jepa_cfg.get("ema_momentum_end")
     max_len = int(logging.get("max_len", 256))
     max_sequences = logging.get("max_sequences")
     eval_max_sequences = int(logging.get("eval_max_sequences", 256))
@@ -230,12 +255,20 @@ def main() -> int:
         predictor_dim=int(jepa_cfg.get("predictor_dim", 512)),
         mask_ratio=float(jepa_cfg.get("mask_ratio", 0.2)),
         mask_span=int(jepa_cfg.get("mask_span", 8)),
-        ema_momentum=float(jepa_cfg.get("ema_momentum", 0.996)),
+        ema_momentum=ema_start,
+        ema_momentum_end=None if ema_end is None else float(ema_end),
         loss_mse=float(jepa_cfg.get("loss_mse", 1.0)),
         loss_cosine=float(jepa_cfg.get("loss_cosine", 0.1)),
         var_weight=float(jepa_cfg.get("var_weight", 0.1)),
         cov_weight=float(jepa_cfg.get("cov_weight", 0.04)),
         var_target_std=float(jepa_cfg.get("var_target_std", 1.0)),
+        regularize_context=bool(jepa_cfg.get("regularize_context", False)),
+        anchor_weight=float(jepa_cfg.get("anchor_weight", 0.0)),
+        train_last_k_layers=(
+            None
+            if jepa_cfg.get("train_last_k_layers") is None
+            else int(jepa_cfg["train_last_k_layers"])
+        ),
         bidirectional_context=bool(jepa_cfg.get("bidirectional_context", False)),
         freeze_target=bool(jepa_cfg.get("freeze_target", False)),
         seed=seed,
@@ -295,7 +328,13 @@ def main() -> int:
             optimizer.step()
             scheduler.step()
             optimizer.zero_grad()
-            state.ema_update()
+            if ema_end is None:
+                state.ema_update()
+                momentum = ema_start
+            else:
+                progress = step / max(steps - 1, 1)
+                momentum = ema_start + (float(ema_end) - ema_start) * progress
+                state.ema_update(momentum)
             step += 1
             if step % int(logging.get("log_every", 50)) == 0 or step == 1:
                 mask = out["target_mask"]
@@ -309,6 +348,8 @@ def main() -> int:
                     "cov_term": float(out["cov_term"].detach()),
                     "mean_std": diag["mean_std"],
                     "collapse_ratio": diag["collapse_ratio"],
+                    "effective_rank": diag["effective_rank"],
+                    "ema_momentum": momentum,
                     "lr": scheduler.get_last_lr()[0],
                     "elapsed_sec": round(time.time() - started, 1),
                 }
@@ -317,6 +358,7 @@ def main() -> int:
                 print(
                     f"step={step} loss={record['loss']:.4f} mse={record['mse']:.4f} "
                     f"cos={record['cosine']:.3f} std={record['mean_std']:.3f} "
+                    f"rank={record['effective_rank']:.1f} "
                     f"collapse={record['collapse_ratio']:.2f}",
                     flush=True,
                 )
@@ -335,6 +377,9 @@ def main() -> int:
                     f"step={step} eval_mse={metrics['eval_mse']:.4f} "
                     f"eval_cos={metrics['eval_cosine']:.3f} "
                     f"eval_std={metrics['eval_mean_std']:.3f} "
+                    f"eval_rank={metrics['eval_effective_rank']:.1f} "
+                    f"eval_ctx_rank={metrics['eval_context_effective_rank']:.1f} "
+                    f"eval_tgt_rank={metrics['eval_target_effective_rank']:.1f} "
                     f"eval_collapse={metrics['eval_collapse_ratio']:.2f}",
                     flush=True,
                 )
