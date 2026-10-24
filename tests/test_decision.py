@@ -53,6 +53,30 @@ def tiny_batch(net, order=(0, 1, 2)):
     }
 
 
+def test_bidirectional_mask_masks_padding_only():
+    from jev_qwen.model import DecisionNetwork, build_head
+
+    class Recorder(FakeBackbone):
+        def forward(self, input_ids, position_ids=None, attention_mask=None, **kw):
+            self.seen_mask = attention_mask
+            return super().forward(input_ids, position_ids, attention_mask, **kw)
+
+    backbone = Recorder(16)
+    net = DecisionNetwork(
+        backbone,
+        build_head({"type": "compat", "new_dim": 8}, 16),
+        bidirectional=True,
+    ).eval()
+    batch = tiny_batch(net)
+    batch["token_mask"] = torch.ones_like(batch["input_ids"], dtype=torch.bool)
+    batch["token_mask"][:, -1] = False
+    net(**batch)
+    mask = backbone.seen_mask
+    assert mask.shape == (1, 1, 12, 12)
+    assert torch.equal(mask[0, 0, :, 0], torch.zeros(12))
+    assert torch.equal(mask[0, 0, :, -1], torch.full((12,), torch.finfo(mask.dtype).min))
+
+
 def test_schema_rejects_invalid():
     import pydantic
 

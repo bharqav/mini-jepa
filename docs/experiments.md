@@ -67,7 +67,39 @@ reruns are bit-identical; different seeds are not (the 3-epoch compat
 accuracy spans 0.6065-0.7015).
 
 ## What would come next
-A 5-epoch seed sweep (to separate epoch scaling from seed noise), larger LoRA
-rank, harder subsets (`hard_50k`), packed multi-question execution, and an
-external teacher with validation, all implemented or configured, none yet
-measured.
+A 5-epoch seed sweep (to separate epoch scaling from seed noise), a multi-seed
+JEPA probe sweep with a decision-aware auxiliary objective, larger LoRA rank,
+harder subsets (`hard_50k`), packed multi-question execution, and an external
+teacher with validation, all implemented or configured, none yet measured.
+
+## Episode 7 — Real Qwen3-0.6B JEPA + frozen decision probe (single seed)
+
+This is the first real-weight JEPA run, not the toy 4-layer smoke. Protocol:
+Qwen3-0.6B revision `c1899de...`, first 8 decoder layers, packed decision text
+(8,000 rows of length 256), 2,000 JEPA steps, batch 8, bf16, RTX 5060 via
+WSL2. The probe freezes the backbone and trains only a `CompatHead` for one
+epoch on 20,000 train questions; the evaluated test subset is 392 rows and is
+identical across all rows below.
+
+| system | pretrain eval MSE | pretrain eval cosine | probe acc | NLL | ECE | choice | noul | AUC |
+|---|---|---|---|---|---|---|---|---|
+| pretrained Qwen, causal | — | — | **0.5745** | **0.9461** | 0.0427 | **0.5266** | **0.6820** | **0.7336** |
+| causal EMA JEPA | 12.33 | 0.571 | 0.3940 | 1.1524 | 0.0256 | 0.2251 | 0.6113 | 0.6471 |
+| causal frozen-target JEPA | 12.38 | 0.596 | 0.4975 | 1.0563 | 0.0308 | 0.4246 | 0.6254 | 0.6982 |
+| pretrained Qwen, bidirectional | — | — | 0.5390 | 1.0178 | 0.0455 | 0.4512 | 0.6843 | 0.7410 |
+| bidirectional EMA JEPA | **6.42** | **0.664** | 0.4185 | 1.1491 | 0.0345 | 0.2539 | 0.6372 | 0.6529 |
+
+The bidirectional rows use `configs/jepa_probe_bidir.yaml` so the probe's
+attention matches the JEPA encoder. Bidirectional JEPA has the best latent MSE
+and cosine, yet is 12.1 accuracy points below the bidirectional pretrained
+baseline (0.4185 vs 0.5390). The causal comparison is 7.7 points below its
+baseline (0.4975 vs 0.5745). The result is consistent in both attention modes:
+better latent prediction did not produce a better decision representation.
+
+**Verdict: negative result.** Under this single-seed protocol, JEPA
+initialisation does not beat the pretrained Qwen baseline on the downstream
+decision probe. A seed sweep and an auxiliary decision-aware objective are
+required before claiming a JEPA win.
+
+Measured values: `results/jepa_qwen_results.json`. Raw runs (git-ignored):
+`runs/jepa-qwen-*`, `runs/jepa-probe-*`.

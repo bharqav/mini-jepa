@@ -67,6 +67,7 @@ class JEPAConfig:
     cov_weight: float = 0.04  # VICReg covariance weight
     var_target_std: float = 1.0  # hinge: per-dim std should reach this
     bidirectional_context: bool = False  # experimental non-canonical option
+    freeze_target: bool = False  # keep the pretrained target encoder fixed
     seed: int = 0
 
 
@@ -191,6 +192,11 @@ class EncoderStack(nn.Module):
         if self.is_qwen:
             L = input_ids.shape[1] if input_ids is not None else inputs_embeds.shape[1]
             dev = (input_ids if input_ids is not None else inputs_embeds).device
+            dtype = (
+                inputs_embeds.dtype
+                if inputs_embeds is not None
+                else self.model.embed_tokens(input_ids).dtype
+            )
             if position_ids is None:
                 position_ids = torch.arange(L, device=dev).expand(
                     (input_ids if input_ids is not None else inputs_embeds).shape[0], L
@@ -202,10 +208,13 @@ class EncoderStack(nn.Module):
                     L,
                     L,
                     device=dev,
-                    dtype=(inputs_embeds.dtype if inputs_embeds is not None else torch.float32),
+                    dtype=dtype,
                 )
             else:
-                c = torch.triu(torch.full((L, L), float("-inf"), device=dev), diagonal=1)
+                c = torch.triu(
+                    torch.full((L, L), float("-inf"), device=dev, dtype=dtype),
+                    diagonal=1,
+                )
                 bias = c.view(1, 1, L, L)
             out = self.model(
                 input_ids=input_ids,
@@ -308,6 +317,7 @@ class JEPAState(nn.Module):
             self.context = EncoderStack(**kw)
             self.target = copy.deepcopy(self.context)
         self.target.requires_grad_(False)
+        self.freeze_target = cfg.freeze_target
         dim = self.context.dim
         self.predictor = LatentPredictor(dim, cfg.predictor_dim, cfg.predictor_layers)
         self.ctx_mask_vector = nn.Parameter(torch.randn(dim) * 0.02)
@@ -320,6 +330,8 @@ class JEPAState(nn.Module):
 
     @torch.no_grad()
     def ema_update(self, momentum: float | None = None) -> None:
+        if self.freeze_target:
+            return
         m = self.cfg.ema_momentum if momentum is None else momentum
         for pc, pt in zip(self.context.parameters(), self.target.parameters()):
             pt.mul_(m).add_(pc.detach(), alpha=1.0 - m)
@@ -328,7 +340,7 @@ class JEPAState(nn.Module):
         self, input_ids: torch.Tensor, rng: torch.Generator | None = None
     ) -> dict[str, torch.Tensor]:
         B, L = input_ids.shape
-        rng = rng or torch.Generator(device=input_ids.device).manual_seed(self.cfg.seed)
+        rng = rng or torch.Generator(device="cpu").manual_seed(self.cfg.seed)
         # Per-sample block masks (loop is fine at this scale; keeps spans exact).
         tmasks = torch.stack(
             [sample_target_spans(L, self.cfg.mask_ratio, self.cfg.mask_span, rng) for _ in range(B)]
@@ -338,12 +350,17 @@ class JEPAState(nn.Module):
 
         # TARGET pathway: unmasked input, no grad — the stop-gradient boundary.
         with torch.no_grad():
+            tgt_emb = self.target.embed_tokens(input_ids)
             tgt_reps = self.target(
-                input_ids=input_ids, position_ids=pos, bidirectional=self.cfg.bidirectional_context
+                inputs_embeds=tgt_emb,
+                position_ids=pos,
+                bidirectional=self.cfg.bidirectional_context,
             )
 
         # CONTEXT pathway: masked input, gradients flow here + predictor only.
-        ctx_emb = apply_context_masking(self.embed_tokens(input_ids), tmasks, self.ctx_mask_vector)
+        ctx_emb = apply_context_masking(
+            self.context.embed_tokens(input_ids), tmasks, self.ctx_mask_vector
+        )
         ctx_reps = self.context(
             inputs_embeds=ctx_emb, position_ids=pos, bidirectional=self.cfg.bidirectional_context
         )
