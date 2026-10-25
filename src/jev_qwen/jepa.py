@@ -451,10 +451,13 @@ def jepa_loss(
         parts["var_context"] = var_ctx.detach()
         parts["cov_context"] = cov_ctx.detach()
     if cfg.regularize_target:
+        # Target-side diagnostics only: the target encoder is detached and updated
+        # by EMA, so gradient-based regularization cannot flow back to it.
+        # We log these terms to monitor collapse without inflating the loss with
+        # constants that do not affect gradients.
         t = target[mask]
         var_tgt = variance_hinge(t, cfg.var_target_std)
         cov_tgt = covariance_penalty(t)
-        loss = loss + cfg.target_var_weight * var_tgt + cfg.target_cov_weight * cov_tgt
         parts["var_target"] = var_tgt.detach()
         parts["cov_target"] = cov_tgt.detach()
     if cfg.anchor_weight > 0 and context is not None:
