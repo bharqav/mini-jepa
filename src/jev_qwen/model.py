@@ -32,7 +32,11 @@ class SelfAttention(nn.Module):
     def forward(self, x, padding_mask):
         q, k, v = self.q(x), self.k(x), self.v(x)
         scores = torch.einsum("bqd,bkd->bqk", q, k) / math.sqrt(self.new_dim)
-        scores = scores.masked_fill(~padding_mask[:, None, :], -float("inf"))
+        # Bidirectional padding isolation: neither padded queries nor padded keys
+        # participate in attention. This prevents masked candidates from reading
+        # or being read by visible candidates.
+        attn_mask = padding_mask[:, None, :] & padding_mask[:, :, None]
+        scores = scores.masked_fill(~attn_mask, -float("inf"))
         return self.o(torch.einsum("bqk,bkd->bqd", torch.softmax(scores, -1), v))
 
 
